@@ -176,6 +176,30 @@ def connect(db_path: str | Path, *, read_only: bool = False) -> Iterator[sqlite3
         conn.close()
 
 
+@contextmanager
+def resolve_conn(
+    conn: sqlite3.Connection | None,
+    db_path: str | Path | None,
+    *,
+    read_only: bool = False,
+) -> Iterator[sqlite3.Connection]:
+    """Yield a usable connection from either an open ``conn`` or a ``db_path``.
+
+    If ``conn`` is given it is yielded as-is (the caller owns its transaction and
+    lifecycle — nothing is committed or closed here). Otherwise ``db_path`` is
+    opened via :func:`connect` (which commits on success and always closes).
+    Exactly one of the two must be provided. This is the shared open-path for the
+    write and read modules, and the ``conn=`` seam the SaaS layer uses (arch 04).
+    """
+    if conn is not None:
+        yield conn
+        return
+    if db_path is None:
+        raise ValueError("a connection (conn=) or a db_path is required")
+    with connect(db_path, read_only=read_only) as opened:
+        yield opened
+
+
 def _init_schema(conn: sqlite3.Connection, *, node_name: str | None = None) -> None:
     """Run the DDL and populate node-identity meta rows on an open connection."""
     conn.executescript(DDL)

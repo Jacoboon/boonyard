@@ -52,3 +52,9 @@ DEFAULT_ENTRY_TYPES: frozenset[str] = frozenset(
 # Seats exempt from the audit_doctor "AI-seat entry missing a model: tag" check
 # (wall entry 97). A human and the system don't self-report a model.
 NON_MODEL_SEATS: frozenset[str] = frozenset({"professor", "system"})
+
+# Tag namespaces (colon-delimited, ADR-0009) the package knows about by default.
+# ``model:`` is canon (the agent-identity convention, wall entry 97) and the
+# package writes it itself. A node's boonyard.toml [tags.namespaces] extends this
+# (M4). An undeclared namespace warns but inserts; it is never rejected.
+DEFAULT_TAG_NAMESPACES: frozenset[str] = frozenset({"model"})
