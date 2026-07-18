@@ -219,6 +219,14 @@ ORDER BY timestamp DESC
 LIMIT N;
 ```
 
+> **Clarification (2026-07-18, design seat, per implementation — wall entries 101/105):**
+> the sketch above does not parse in practice — FTS5 `MATCH` does not accept a
+> schema-qualified or aliased virtual table as its operand across an `ATTACH`
+> boundary. The shipped `aggregator.search_text` therefore reuses the per-node
+> `query.search_text` (each node opened read-only directly) and merges/sorts/limits
+> in Python. The observable contract is identical: read-only union with a `source`
+> field. ATTACH+UNION remains the prescribed mechanism for the row readers.
+
 For `list_tags`, the aggregator can union `entry_tag` from each attached node and sum counts:
 
 ```sql

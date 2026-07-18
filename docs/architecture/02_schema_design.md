@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 -- Bootstrap rows; INSERT OR IGNORE makes init_db() idempotent.
+-- NOTE (clarified 2026-07-18, design seat, per implementation — wall entries 98/105):
+-- the NULL-valued rows below target a NOT NULL column ON PURPOSE. OR IGNORE
+-- swallows the NOT NULL violation, so these placeholder rows are deliberately
+-- SKIPPED at DDL time; init_db() then INSERTs real values (uuid, name, timestamp)
+-- from Python. The skip is the mechanism, not a bug. schema_version, being
+-- non-NULL, is the only row actually seeded here.
 INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('node_uuid', NULL);  -- populated on init
 INSERT OR IGNORE INTO meta (key, value) VALUES ('node_name', NULL);  -- populated from boonyard.toml on init

@@ -5,7 +5,9 @@ __pycache__/
 htmlcov/
 dist/
 *.egg-info/
-node/          # Boonyard's own live node (M8) — data never goes in git
+# Boonyard's own live node (M8) — the node is a live artifact; data never goes in git.
+# (gitignore has no inline comments — this must be on its own line to work.)
+node/
 *.db
 *.db-wal
 *.db-shm
