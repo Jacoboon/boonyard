@@ -8,7 +8,7 @@ flat and small on purpose (CHARTER); everything below is stdlib-only (ADR-0001).
 
 from .aggregator import Aggregator, aggregator
 from .constants import SCHEMA_VERSION
-from .db import connect, init_db, schema_version
+from .db import connect, init_db, reindex, schema_version
 from .log import log_entry, log_skill_revision, validate_entry
 from .profile import (
     Profile,
@@ -58,6 +58,7 @@ __all__ = [
     "log_skill_revision",
     "node_info",
     "recent",
+    "reindex",
     "resolve_db_path",
     "resolve_profile_path",
     "retag_entry",

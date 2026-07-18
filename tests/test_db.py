@@ -139,5 +139,36 @@ class ConnectTests(unittest.TestCase):
             self.assertEqual(n, 0)
 
 
+class ReindexTests(unittest.TestCase):
+    def test_reindex_rebuilds_derived_and_creates_extras_indexes(self):
+        from boonyard import log_entry, reindex
+        from boonyard.profile import profile_from_dict
+
+        conn = _mem()
+        log_entry("code", "note", "searchable body", tags="alpha,beta", extras={"x": 1}, conn=conn)
+        profile = profile_from_dict(
+            {
+                "extras": {
+                    "enabled": True,
+                    "fields": ["x:int", "r:float", "name:str"],
+                    "indexes": ["x", "r", "name"],
+                }
+            }
+        )
+        reindex(conn=conn, profile=profile)
+        indexes = {
+            r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        }
+        for expected in ("idx_entry_extras_x", "idx_entry_extras_r", "idx_entry_extras_name"):
+            self.assertIn(expected, indexes)
+        # derived data still intact after rebuild
+        tags = {r["tag"] for r in conn.execute("SELECT tag FROM entry_tag")}
+        self.assertEqual(tags, {"alpha", "beta", "note"})
+        hits = conn.execute(
+            "SELECT rowid FROM entry_fts WHERE entry_fts MATCH 'searchable'"
+        ).fetchall()
+        self.assertEqual(len(hits), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

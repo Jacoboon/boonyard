@@ -263,3 +263,52 @@ def schema_version(conn: sqlite3.Connection) -> int:
     """
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     return int(row["value"]) if row is not None else SCHEMA_VERSION
+
+
+def _extras_index_ddl(fields: tuple[str, ...], indexes: tuple[str, ...]) -> list[str]:
+    """Build ``CREATE INDEX`` DDL for the profile's hot extras fields (arch 02).
+
+    Numeric fields (declared ``name:int`` / ``name:float`` in ``[extras].fields``)
+    get a CAST expression index for type-correct range comparisons; others index
+    the raw ``json_extract``.
+    """
+    types = {}
+    for spec in fields:
+        name, _, kind = spec.partition(":")
+        types[name] = kind or "str"
+    ddl = []
+    for field_name in indexes:
+        expr = f"json_extract(extras, '$.{field_name}')"
+        if types.get(field_name) in ("int", "integer"):
+            expr = f"CAST({expr} AS INTEGER)"
+        elif types.get(field_name) in ("float", "real"):
+            expr = f"CAST({expr} AS REAL)"
+        ddl.append(f"CREATE INDEX IF NOT EXISTS idx_entry_extras_{field_name} ON entry({expr})")
+    return ddl
+
+
+def reindex(
+    db_path: str | Path | None = None,
+    *,
+    conn: sqlite3.Connection | None = None,
+    profile=None,
+) -> None:
+    """Rebuild the derived indexes: FTS, ``entry_tag``, and profile extras indexes.
+
+    Non-destructive maintenance — recomputes derived data from the authoritative
+    ``entry`` rows. FTS is rebuilt via the FTS5 ``'rebuild'`` command; ``entry_tag``
+    is repopulated from each entry's stored (already-normalized) ``tags``; and, if a
+    profile enables extras, the declared hot expression indexes are (re)created.
+    """
+    with resolve_conn(conn, db_path) as c:
+        c.execute("INSERT INTO entry_fts(entry_fts) VALUES ('rebuild')")
+        c.execute("DELETE FROM entry_tag")
+        for row in c.execute("SELECT id, tags FROM entry WHERE tags IS NOT NULL AND tags != ''"):
+            tags = [t for t in row["tags"].split(",") if t]
+            c.executemany(
+                "INSERT OR IGNORE INTO entry_tag (entry_id, tag) VALUES (?, ?)",
+                [(row["id"], t) for t in tags],
+            )
+        if profile is not None and getattr(profile, "extras_enabled", False):
+            for stmt in _extras_index_ddl(profile.extras_fields, profile.extras_indexes):
+                c.execute(stmt)
