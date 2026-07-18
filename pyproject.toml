@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boonyard"
+version = "3.0.0"
+description = "Append-only, queryable, threaded memory substrate for multi-agent collaboration."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jacob Reed" }]
+keywords = ["memory", "substrate", "sqlite", "mcp", "multi-agent", "append-only"]
+# ADR-0001: the package has ZERO runtime dependencies. This list stays empty.
+dependencies = []
+
+[project.urls]
+Homepage = "https://boonyard.com"
+
+[project.scripts]
+# Arrives at M5. Declaring it now is a lazy entry point; install succeeds
+# regardless of whether boonyard.cli exists yet (it is imported only on invocation).
+boonyard = "boonyard.cli:main"
+
+[project.optional-dependencies]
+# Dev tooling only. Never imported by the package at runtime (ADR-0001).
+# The suite must also run with a bare `python -m unittest`.
+dev = ["ruff"]
+
+[tool.setuptools.packages.find]
+where = ["package"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["package", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
