@@ -12,6 +12,7 @@ from .constants import SCHEMA_VERSION
 from .db import connect, init_db, reindex, schema_version
 from .export import export_bundle, import_bundle
 from .log import log_entry, log_skill_revision, validate_entry
+from .mcp import MCPServer, serve
 from .profile import (
     Profile,
     default_profile,
@@ -41,6 +42,7 @@ __version__ = "3.0.0"
 __all__ = [
     "SCHEMA_VERSION",
     "Aggregator",
+    "MCPServer",
     "Profile",
     "__version__",
     "aggregator",
@@ -68,6 +70,7 @@ __all__ = [
     "resolve_profile_path",
     "retag_entry",
     "schema_version",
+    "serve",
     "search_by_tag",
     "search_by_tag_exact",
     "search_text",

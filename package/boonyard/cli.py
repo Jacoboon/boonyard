@@ -17,7 +17,7 @@ from pathlib import Path
 from . import __version__, query
 from .aggregator import aggregator
 from .backup import backup_node
-from .constants import DEFAULT_DB_FILENAME, DEFAULT_NODE_DIRNAME
+from .constants import DEFAULT_DB_FILENAME, DEFAULT_MCP_PORT, DEFAULT_NODE_DIRNAME
 from .db import init_db, reindex
 from .export import export_bundle, import_bundle
 from .log import log_entry
@@ -261,6 +261,26 @@ def cmd_import(args) -> int:
     return EXIT_OK
 
 
+def cmd_mcp(args) -> int:
+    from .mcp import serve
+
+    if args.config:
+        nodes = _load_umbrella_nodes(Path(args.config))
+        print(f"serving aggregator ({len(nodes)} nodes, read-only) on {args.host}:{args.port}")
+        serve(aggregator=aggregator(nodes=nodes), host=args.host, port=args.port, api_key=args.key)
+    else:
+        db_path = _db(args)
+        print(f"serving node {db_path} on {args.host}:{args.port}")
+        serve(
+            db_path=db_path,
+            profile=_profile(args),
+            host=args.host,
+            port=args.port,
+            api_key=args.key,
+        )
+    return EXIT_OK
+
+
 # --------------------------------------------------------------------------
 # Umbrella (aggregator) subcommands
 # --------------------------------------------------------------------------
@@ -444,6 +464,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="the export bundle zip")
     p.add_argument("--force", action="store_true", help="overwrite an existing node")
     p.set_defaults(func=cmd_import)
+
+    p = sub.add_parser("mcp", help="serve the node over MCP (stdlib http.server)")
+    p.add_argument("--port", type=int, default=DEFAULT_MCP_PORT)
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--config", help="umbrella.toml to serve as a read-only aggregator")
+    p.add_argument("--key", help="require this bearer API key (default: no auth, local)")
+    p.set_defaults(func=cmd_mcp)
 
     p = sub.add_parser("umbrella", help="over-many aggregator")
     p.add_argument("--config", help="path to umbrella.toml")
