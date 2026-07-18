@@ -16,8 +16,10 @@ from pathlib import Path
 
 from . import __version__, query
 from .aggregator import aggregator
+from .backup import backup_node
 from .constants import DEFAULT_DB_FILENAME, DEFAULT_NODE_DIRNAME
 from .db import init_db, reindex
+from .export import export_bundle, import_bundle
 from .log import log_entry
 from .profile import load_profile, resolve_db_path, resolve_profile_path
 from .retag import retag_entry
@@ -236,6 +238,29 @@ def cmd_info(args) -> int:
     return EXIT_OK
 
 
+def cmd_backup(args) -> int:
+    db_path = _db(args)
+    dest = args.path or f"{db_path}.bak"
+    backup_node(dest, db_path=db_path)
+    print(f"backed up {db_path} -> {dest}")
+    return EXIT_OK
+
+
+def cmd_export(args) -> int:
+    db_path = _db(args)
+    dest = args.path or f"{db_path}.export.zip"
+    profile_path = resolve_profile_path(getattr(args, "profile", None))
+    export_bundle(dest, db_path=db_path, profile_path=profile_path)
+    print(f"exported {db_path} -> {dest}")
+    return EXIT_OK
+
+
+def cmd_import(args) -> int:
+    dest = import_bundle(args.path, _db(args), overwrite=args.force)
+    print(f"imported {args.path} -> {dest}")
+    return EXIT_OK
+
+
 # --------------------------------------------------------------------------
 # Umbrella (aggregator) subcommands
 # --------------------------------------------------------------------------
@@ -406,6 +431,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", required=True)
     p.add_argument("--actor", required=True)
     p.set_defaults(func=cmd_retag)
+
+    p = sub.add_parser("backup", help="single-file online backup of the node")
+    p.add_argument("path", nargs="?", help="destination (default: <db>.bak)")
+    p.set_defaults(func=cmd_backup)
+
+    p = sub.add_parser("export", help="portable zip bundle (journal.db + profile)")
+    p.add_argument("path", nargs="?", help="destination zip (default: <db>.export.zip)")
+    p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("import", help="restore a boonyard export bundle")
+    p.add_argument("path", help="the export bundle zip")
+    p.add_argument("--force", action="store_true", help="overwrite an existing node")
+    p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("umbrella", help="over-many aggregator")
     p.add_argument("--config", help="path to umbrella.toml")

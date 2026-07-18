@@ -7,8 +7,10 @@ flat and small on purpose (CHARTER); everything below is stdlib-only (ADR-0001).
 """
 
 from .aggregator import Aggregator, aggregator
+from .backup import backup_node
 from .constants import SCHEMA_VERSION
 from .db import connect, init_db, reindex, schema_version
+from .export import export_bundle, import_bundle
 from .log import log_entry, log_skill_revision, validate_entry
 from .profile import (
     Profile,
@@ -43,10 +45,13 @@ __all__ = [
     "__version__",
     "aggregator",
     "audit_doctor",
+    "backup_node",
     "by_id",
     "connect",
     "default_profile",
+    "export_bundle",
     "get_thread",
+    "import_bundle",
     "init_db",
     "latest_skill",
     "list_agents",
