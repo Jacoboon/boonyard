@@ -23,9 +23,13 @@ import logging
 from collections.abc import Iterable
 from pathlib import Path
 from sqlite3 import Connection
+from typing import TYPE_CHECKING
 
 from .constants import DEFAULT_AGENTS, DEFAULT_ENTRY_TYPES
 from .db import resolve_conn
+
+if TYPE_CHECKING:
+    from .profile import Profile
 
 _log = logging.getLogger("boonyard")
 
@@ -133,6 +137,7 @@ def validate_entry(
     entry_type: str,
     tags: str | None = None,
     *,
+    profile: "Profile | None" = None,
     known_agents: frozenset[str] = DEFAULT_AGENTS,
     known_entry_types: frozenset[str] = DEFAULT_ENTRY_TYPES,
     known_namespaces: frozenset[str] | None = None,
@@ -140,12 +145,17 @@ def validate_entry(
 ) -> list[str]:
     """Return the soft-validation warnings for an entry (never raises).
 
-    This is the reusable validator the write path emits and ``audit_doctor`` (M3)
+    This is the reusable validator the write path emits and ``audit_doctor``
     replays over existing rows. It reports unknown agent / entry_type, tag
     well-formedness, undeclared namespaces, and probable plural-forks. Hard-fail
     conditions (missing required fields, non-existent related_id) are enforced by
-    :func:`log_entry`, not here.
+    :func:`log_entry`, not here. A ``profile`` (M4) supplies the known sets when
+    given, overriding the ``known_*`` defaults.
     """
+    if profile is not None:
+        known_agents = profile.allowed_agents
+        known_entry_types = profile.allowed_entry_types
+        known_namespaces = profile.namespaces
     clean, warnings = _normalize_tags(tags, entry_type)
     if agent and agent not in known_agents:
         warnings.append(f"unknown agent {agent!r} — logging anyway (soft validation)")
@@ -216,6 +226,7 @@ def log_entry(
     *,
     conn: Connection | None = None,
     db_path: str | Path | None = None,
+    profile: "Profile | None" = None,
     known_agents: frozenset[str] = DEFAULT_AGENTS,
     known_entry_types: frozenset[str] = DEFAULT_ENTRY_TYPES,
     known_namespaces: frozenset[str] | None = None,
@@ -231,6 +242,7 @@ def log_entry(
     are populated in the same transaction as the ``entry`` insert.
 
     Provide either ``conn`` (caller-managed) or ``db_path`` (opened+committed here).
+    A ``profile`` (M4) supplies the soft-validation sets when given.
 
     Example:
         new_id = log_entry(
@@ -245,6 +257,11 @@ def log_entry(
         raise ValueError("entry_type is required and must be non-empty")
     if content is None or content == "":
         raise ValueError("content is required and must be non-empty")
+
+    if profile is not None:
+        known_agents = profile.allowed_agents
+        known_entry_types = profile.allowed_entry_types
+        known_namespaces = profile.namespaces
 
     clean_tags, tag_warnings = _normalize_tags(tags, entry_type)
     extras_text, extras_warnings = _serialize_extras(extras)

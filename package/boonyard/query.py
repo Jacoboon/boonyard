@@ -14,10 +14,14 @@ import json
 import logging
 from pathlib import Path
 from sqlite3 import Connection, OperationalError
+from typing import TYPE_CHECKING
 
-from .constants import DEFAULT_AGENTS, DEFAULT_ENTRY_TYPES
+from .constants import DEFAULT_AGENTS, DEFAULT_ENTRY_TYPES, NON_MODEL_SEATS
 from .db import resolve_conn
 from .log import validate_entry
+
+if TYPE_CHECKING:
+    from .profile import Profile
 
 _log = logging.getLogger("boonyard")
 
@@ -312,16 +316,25 @@ def node_info(
     *,
     conn: Connection | None = None,
     db_path: str | Path | None = None,
+    profile: "Profile | None" = None,
 ) -> dict:
     """Full node metadata: identity, schema version, counts, size, last write.
 
-    ``profile`` is populated by the profile layer (M4); it is ``{}`` here.
+    ``profile``, if given, is summarized under the ``profile`` key.
     ``storage_bytes`` is None for in-memory nodes.
     """
     with resolve_conn(conn, db_path, read_only=True) as c:
         meta = {r["key"]: r["value"] for r in c.execute("SELECT key, value FROM meta")}
         entry_count = c.execute("SELECT COUNT(*) AS n FROM entry").fetchone()["n"]
         last_write = c.execute("SELECT MAX(timestamp) AS t FROM entry").fetchone()["t"]
+    profile_summary: dict = {}
+    if profile is not None:
+        profile_summary = {
+            "allowed_agents": sorted(profile.allowed_agents),
+            "allowed_entry_types": sorted(profile.allowed_entry_types),
+            "namespaces": sorted(profile.namespaces),
+            "extras_enabled": profile.extras_enabled,
+        }
     return {
         "name": meta.get("node_name"),
         "uuid": meta.get("node_uuid"),
@@ -330,7 +343,7 @@ def node_info(
         "entry_count": entry_count,
         "storage_bytes": _storage_bytes(db_path),
         "last_write_at": last_write,
-        "profile": {},
+        "profile": profile_summary,
     }
 
 
@@ -338,6 +351,7 @@ def audit_doctor(
     *,
     conn: Connection | None = None,
     db_path: str | Path | None = None,
+    profile: "Profile | None" = None,
     known_agents: frozenset[str] = DEFAULT_AGENTS,
     known_entry_types: frozenset[str] = DEFAULT_ENTRY_TYPES,
     known_namespaces: frozenset[str] | None = None,
@@ -347,9 +361,15 @@ def audit_doctor(
     Surfaces: possible deletions (gaps in the autoincrement id sequence — ADR-0005
     says entries are never deleted, so a gap is suspicious), orphaned related_id
     references, soft-validation warnings replayed over every row, skill threads
-    that aren't root-anchored, unprecedented (singleton) tags, and unknown agents
-    / entry_types. Warns; never mutates.
+    that aren't root-anchored, unprecedented (singleton) tags, unknown agents /
+    entry_types (the advisory seat registry — wall entry 97), and AI-seat entries
+    missing a ``model:`` tag (professor/system exempt). Warns; never mutates. A
+    ``profile`` supplies the known sets when given.
     """
+    if profile is not None:
+        known_agents = profile.allowed_agents
+        known_entry_types = profile.allowed_entry_types
+        known_namespaces = profile.namespaces
     warnings: list[dict] = []
     suggestions: list[str] = []
 
@@ -438,6 +458,27 @@ def audit_doctor(
             for r in c.execute("SELECT entry_type, COUNT(*) AS n FROM entry GROUP BY entry_type")
             if r["entry_type"] not in known_entry_types
         ]
+
+        # AI-seat entries missing a model: tag (wall entry 97). professor/system
+        # are exempt (they don't self-report a model). Soft: warns, never rejects.
+        missing_model = [
+            r["id"]
+            for r in c.execute("SELECT id, agent, tags FROM entry")
+            if r["agent"] not in NON_MODEL_SEATS
+            and not any(t.startswith("model:") for t in (r["tags"] or "").split(","))
+        ]
+        if missing_model:
+            warnings.append(
+                {
+                    "kind": "missing_model_tag",
+                    "count": len(missing_model),
+                    "sample_ids": missing_model[:10],
+                }
+            )
+            suggestions.append(
+                "Some AI-seat entries carry no model: tag (wall entry 97's agent-identity "
+                "convention); include model:<exact-model-string> on AI-seat writes."
+            )
 
     if not_anchored:
         suggestions.append(
