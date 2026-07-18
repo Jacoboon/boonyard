@@ -261,22 +261,34 @@ def cmd_import(args) -> int:
     return EXIT_OK
 
 
+def _resolve_mcp_key(args) -> str | None:
+    """The bearer key: --key wins, else $BOONYARD_MCP_KEY (keeps it out of argv)."""
+    import os
+
+    return args.key or os.environ.get("BOONYARD_MCP_KEY")
+
+
 def cmd_mcp(args) -> int:
     from .mcp import serve
 
+    key = _resolve_mcp_key(args)
+    auth = "bearer-auth ON" if key else "no auth (local)"
     if args.config:
         nodes = _load_umbrella_nodes(Path(args.config))
-        print(f"serving aggregator ({len(nodes)} nodes, read-only) on {args.host}:{args.port}")
-        serve(aggregator=aggregator(nodes=nodes), host=args.host, port=args.port, api_key=args.key)
+        print(
+            f"serving aggregator ({len(nodes)} nodes, read-only, {auth}) "
+            f"on {args.host}:{args.port}"
+        )
+        serve(aggregator=aggregator(nodes=nodes), host=args.host, port=args.port, api_key=key)
     else:
         db_path = _db(args)
-        print(f"serving node {db_path} on {args.host}:{args.port}")
+        print(f"serving node {db_path} ({auth}) on {args.host}:{args.port}")
         serve(
             db_path=db_path,
             profile=_profile(args),
             host=args.host,
             port=args.port,
-            api_key=args.key,
+            api_key=key,
         )
     return EXIT_OK
 
@@ -497,8 +509,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_output() -> None:
+    """Emit UTF-8 so non-ASCII output (↳, —, →) never crashes a legacy console.
+
+    Windows' default console encoding is cp1252, which can't encode the glyphs the
+    CLI prints; without this, ``boonyard recent`` on any entry with a related_id
+    raises UnicodeEncodeError. Reconfiguring is a no-op on redirected streams
+    (StringIO/pipes) that lack ``reconfigure``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``boonyard`` command. Returns a process exit code."""
+    _force_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

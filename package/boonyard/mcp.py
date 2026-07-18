@@ -19,7 +19,7 @@ the SaaS runs a real web layer in front of the same package).
 """
 
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import query
 from .constants import DEFAULT_MCP_PORT
@@ -397,9 +397,15 @@ def make_handler(server: MCPServer):
 
 def make_httpd(
     server: MCPServer, host: str = "127.0.0.1", port: int = DEFAULT_MCP_PORT
-) -> HTTPServer:
-    """Build (but don't start) an HTTPServer serving ``server``. Port 0 = ephemeral."""
-    return HTTPServer((host, port), make_handler(server))
+) -> ThreadingHTTPServer:
+    """Build (but don't start) a threaded HTTP server for ``server``. Port 0 = ephemeral.
+
+    Threaded so one slow client can't block all seats — this is a standing service
+    fronted by a tunnel, not a one-request-at-a-time toy. Each tool call opens its
+    own SQLite connection (per-thread), so concurrency is safe (WAL readers don't
+    block; writers serialize at the SQLite layer).
+    """
+    return ThreadingHTTPServer((host, port), make_handler(server))
 
 
 def serve(

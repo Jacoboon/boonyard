@@ -242,6 +242,43 @@ class UmbrellaTests(unittest.TestCase):
             self.assertIn("no nodes", run(["umbrella", "--config", cfg, "list"])[1])
 
 
+class McpKeyResolutionTests(unittest.TestCase):
+    def _args(self, key):
+        import argparse
+
+        return argparse.Namespace(key=key)
+
+    def test_explicit_key_wins(self):
+        import os
+
+        from boonyard.cli import _resolve_mcp_key
+
+        os.environ["BOONYARD_MCP_KEY"] = "from_env"
+        try:
+            self.assertEqual(_resolve_mcp_key(self._args("explicit")), "explicit")
+        finally:
+            del os.environ["BOONYARD_MCP_KEY"]
+
+    def test_env_fallback(self):
+        import os
+
+        from boonyard.cli import _resolve_mcp_key
+
+        os.environ["BOONYARD_MCP_KEY"] = "from_env"
+        try:
+            self.assertEqual(_resolve_mcp_key(self._args(None)), "from_env")
+        finally:
+            del os.environ["BOONYARD_MCP_KEY"]
+
+    def test_none_when_unset(self):
+        import os
+
+        from boonyard.cli import _resolve_mcp_key
+
+        os.environ.pop("BOONYARD_MCP_KEY", None)
+        self.assertIsNone(_resolve_mcp_key(self._args(None)))
+
+
 class ModuleEntryPointTests(unittest.TestCase):
     def test_python_m_boonyard_version(self):
         import subprocess

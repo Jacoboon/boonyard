@@ -336,6 +336,32 @@ class HttpTransportTests(unittest.TestCase):
         finally:
             httpd.shutdown()
 
+    def test_server_is_threaded(self):
+        from http.server import ThreadingHTTPServer
+
+        httpd = make_httpd(MCPServer(db_path=self.db), port=0)
+        try:
+            self.assertIsInstance(httpd, ThreadingHTTPServer)
+        finally:
+            httpd.server_close()
+
+    def test_concurrent_requests(self):
+        httpd, port = self._serve(MCPServer(db_path=self.db))
+        results = []
+
+        def hit():
+            _, resp = self._post(port, _rpc("tools/list"))
+            results.append("result" in resp)
+
+        threads = [threading.Thread(target=hit) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        httpd.shutdown()
+        self.assertEqual(len(results), 8)
+        self.assertTrue(all(results))
+
     def test_malformed_json_over_http(self):
         import urllib.error
 

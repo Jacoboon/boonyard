@@ -29,7 +29,11 @@ Fix that first, before a single line of package code exists:
    htmlcov/
    dist/
    *.egg-info/
-   node/          # Boonyard's own live node (M8) — data never goes in git
+   # Boonyard's own live node (M8) — data never goes in git.
+   # (Comment kept on its own line: gitignore does NOT support inline
+   # comments — the original draft had one here, which silently broke the
+   # pattern. Caught by Code at M8, node entry 1 / commit 8344c62.)
+   node/
    *.db
    *.db-wal
    *.db-shm
