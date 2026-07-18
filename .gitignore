@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+node/          # Boonyard's own live node (M8) — data never goes in git
+*.db
+*.db-wal
+*.db-shm
