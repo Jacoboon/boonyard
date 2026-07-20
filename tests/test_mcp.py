@@ -277,9 +277,9 @@ class HttpTransportTests(unittest.TestCase):
         self.addCleanup(httpd.shutdown)
         return httpd, httpd.server_address[1]
 
-    def _post(self, port, payload, headers=None):
+    def _post(self, port, payload, headers=None, path=""):
         req = urllib.request.Request(
-            f"http://127.0.0.1:{port}",
+            f"http://127.0.0.1:{port}/{path}",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", **(headers or {})},
         )
@@ -333,6 +333,76 @@ class HttpTransportTests(unittest.TestCase):
                 port, _rpc("tools/list"), headers={"Authorization": "Bearer bnyk_secret"}
             )
             self.assertEqual(status, 200)
+        finally:
+            httpd.shutdown()
+
+    def test_capability_url_path_auth(self):
+        # The key as the leading URL path segment (no header) authenticates.
+        httpd, port = self._serve(MCPServer(db_path=self.db, api_key="bnyk_secret"))
+        try:
+            status, resp = self._post(port, _rpc("tools/list"), path="bnyk_secret")
+            self.assertEqual(status, 200)
+            self.assertIn("log_entry", {t["name"] for t in resp["result"]["tools"]})
+        finally:
+            httpd.shutdown()
+
+    def test_both_auth_paths_wrong_is_401(self):
+        import urllib.error
+
+        httpd, port = self._serve(MCPServer(db_path=self.db, api_key="bnyk_secret"))
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self._post(port, _rpc("tools/list"), path="wrongkey")  # wrong path, no header
+            self.assertEqual(ctx.exception.code, 401)
+        finally:
+            httpd.shutdown()
+
+    def test_header_auth_wins_even_with_nonmatching_path(self):
+        httpd, port = self._serve(MCPServer(db_path=self.db, api_key="bnyk_secret"))
+        try:
+            status, _ = self._post(
+                port,
+                _rpc("tools/list"),
+                headers={"Authorization": "Bearer bnyk_secret"},
+                path="somethingelse",
+            )
+            self.assertEqual(status, 200)
+        finally:
+            httpd.shutdown()
+
+    def test_get_returns_405_with_allow(self):
+        import urllib.error
+
+        httpd, port = self._serve(MCPServer(db_path=self.db))
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/")
+            self.assertEqual(ctx.exception.code, 405)
+            self.assertEqual(ctx.exception.headers.get("Allow"), "POST")
+        finally:
+            httpd.shutdown()
+
+    def test_notification_returns_202_no_body(self):
+        httpd, port = self._serve(MCPServer(db_path=self.db))
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/",
+                data=json.dumps(_rpc("notifications/initialized")).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req) as resp:
+                self.assertEqual(resp.status, 202)
+                self.assertEqual(resp.read(), b"")
+        finally:
+            httpd.shutdown()
+
+    def test_initialize_lifecycle_over_http(self):
+        httpd, port = self._serve(MCPServer(db_path=self.db))
+        try:
+            status, resp = self._post(port, _rpc("initialize", {"protocolVersion": "2024-11-05"}))
+            self.assertEqual(status, 200)
+            self.assertIn("protocolVersion", resp["result"])
+            self.assertEqual(resp["result"]["serverInfo"]["name"], "boonyard")
         finally:
             httpd.shutdown()
 

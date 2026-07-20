@@ -18,6 +18,7 @@ The HTTP layer is ``http.server`` (ADR-0001: acceptable for local single-tenant;
 the SaaS runs a real web layer in front of the same package).
 """
 
+import hmac
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -341,56 +342,75 @@ class MCPServer:
 # --------------------------------------------------------------------------
 # HTTP transport (stateless JSON-RPC over POST)
 # --------------------------------------------------------------------------
+def _jsonrpc_error(code: int, message: str, err: str) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": code, "message": message, "data": {"error": err}},
+    }
+
+
 def make_handler(server: MCPServer):
     class _Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):  # quiet by default
+        def log_message(self, *args):  # quiet by default (never log the URL — it may carry the key)
             pass
 
-        def _send(self, status: int, payload: dict | None):
+        def _send(self, status: int, payload: dict | None, extra_headers: dict | None = None):
             body = b"" if payload is None else json.dumps(payload).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             if body:
                 self.wfile.write(body)
 
+        def _authenticated(self) -> bool:
+            """True if no key is configured, or the key is presented via header or path.
+
+            Capability-URL auth (design-seat call): the Claude app's connector dialog
+            has no header field, so the key may arrive EITHER as
+            ``Authorization: Bearer <key>`` OR as the leading URL path segment
+            (``POST https://host/<key>``). Timing-safe on both paths.
+            """
+            if not server._api_key:
+                return True
+            header = self.headers.get("Authorization", "")
+            if header and hmac.compare_digest(header, f"Bearer {server._api_key}"):
+                return True
+            segment = self.path.split("?", 1)[0].strip("/").split("/")[0]
+            return bool(segment) and hmac.compare_digest(segment, server._api_key)
+
+        def do_GET(self):
+            # Streamable HTTP uses GET to open a server->client SSE stream. We don't
+            # offer one (request/response only), so the spec-correct answer is 405.
+            self._send(
+                405,
+                _jsonrpc_error(-32601, "method not allowed; POST JSON-RPC", "validation"),
+                extra_headers={"Allow": "POST"},
+            )
+
         def do_POST(self):
-            if server._api_key:
-                if self.headers.get("Authorization") != f"Bearer {server._api_key}":
-                    self._send(
-                        401,
-                        {
-                            "jsonrpc": "2.0",
-                            "id": None,
-                            "error": {
-                                "code": _JSONRPC_CODE["not_authenticated"],
-                                "message": "not authenticated",
-                                "data": {"error": "not_authenticated"},
-                            },
-                        },
-                    )
-                    return
+            if not self._authenticated():
+                self._send(
+                    401,
+                    _jsonrpc_error(
+                        _JSONRPC_CODE["not_authenticated"], "not authenticated", "not_authenticated"
+                    ),
+                )
+                return
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b"{}"
             try:
                 request = json.loads(raw)
             except json.JSONDecodeError:
-                self._send(
-                    400,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": None,
-                        "error": {
-                            "code": -32700,
-                            "message": "parse error",
-                            "data": {"error": "validation", "message": "invalid JSON"},
-                        },
-                    },
-                )
+                self._send(400, _jsonrpc_error(-32700, "parse error", "validation"))
                 return
             response = server.handle(request)
-            self._send(200 if response is not None else 204, response)
+            # A JSON-RPC response -> 200 with body; a notification (no response) ->
+            # 202 Accepted with no body, per the MCP Streamable HTTP transport.
+            self._send(200 if response is not None else 202, response)
 
     return _Handler
 
