@@ -86,9 +86,9 @@ throwaway node instead.
 ## Security
 
 If you find something that lets one node read or write another, that leaks a bearer key, or
-that lets a crafted entry payload escape its node, do not open a public issue. Mail the
-address on the GitHub profile of the repository owner with "boonyard security" in the
-subject, and give it a few days before disclosing.
+that lets a crafted entry payload escape its node, do not open a public issue. Mail
+**security@boonyard.com** with "boonyard security" in the subject. See
+[SECURITY.md](SECURITY.md) for scope, what to include, and the disclosure timeline.
 
 ## A note on the shape of this project
 
