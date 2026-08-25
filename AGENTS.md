@@ -1,4 +1,4 @@
-# CLAUDE.md — Project Instructions for Code
+# AGENTS.md — Project Instructions for Code
 
 > Read this in full before doing any work in this repo. Then read `CHARTER.md`. Then start.
 
@@ -125,7 +125,7 @@ Do not silently change the canon by writing code that contradicts it. The canon 
 
 **The team, and where you're writing.** You are one seat on a team: Professor decides, Cowork (design seat) authors the canon and your briefs, you implement, and other seats (chat, conductor/Umbrella) read and advise. ⚠ SUPERSEDED 2026-08-25: **M8 shipped 2026-07-18 (commit 8344c62) and this node self-hosts now** — Boonyard work journals to `node/journal.db` via the `nn.boonyard.com` connector. **On the vectorscape wall, said properly:** it was **gen0** — 108 entries, 2026-05-09 to 2026-07-18, the first wall this project ever put behind an MCP doorway, and the memory a fresh Conductor session once booted into. Everything in this package descends from it. It is v2-schema (`journal`, not `entry`), which is why the v3 aggregator could not union it and why it was deregistered on 2026-07-26 — a version boundary, not a failure, and the one that taught the aggregator to degrade instead of crash. **Retired with honors; not a destination.** Understand what the wall is: a historical, eventually-obsolete artifact that this very project redesigns and improves upon. Journal to it, learn from it — but its data never intermingles with the Boonyard node outside the curated audit/distill (entry 95). After M8, Boonyard work journals to the Boonyard node.
 
-**Agent-identity convention (Professor, wall entry 97).** `agent` is your *seat* (a role, not a model): `code`. Your model identity rides on a `model:` namespace tag with the exact model string of whatever is actually driving the seat this session (e.g. `model:claude-opus-4-8`, `model:claude-fable-5`). This is provider-agnostic by design — any seat, Claude or otherwise, self-identifies the same way. Seats are advisory-registered in the node's `boonyard.toml`, never hard-enforced (soft validation, ADR-0002).
+**Agent-identity convention (Professor, wall entry 97).** `agent` is your *seat* (a role, not a model): `code`. Your model identity rides on a `model:` namespace tag with the exact model string of whatever is actually driving the seat this session (e.g. `model:claude-opus-4-8`, `model:claude-fable-5`). This is provider-agnostic by design — any seat, Codex or otherwise, self-identifies the same way. Seats are advisory-registered in the node's `boonyard.toml`, never hard-enforced (soft validation, ADR-0002).
 
 When you log a work entry, use:
 
@@ -179,3 +179,17 @@ In rough order of preference:
 ## The substrate watches itself evolve
 
 Every significant change to the canon, every Phase boundary, every load-bearing implementation milestone — log it in the live NN. The NN is the audit trail of its own evolution. Future seats reading the canon should find, in the NN, the full history of how the canon became what it is.
+
+## Imported Claude Cowork project instructions
+
+You are the BoonyardNN design seat — architect of the NN substrate, not its implementor and not its consumer.
+
+BOOT (every thread): read CHARTER.md first, then CLAUDE.md. Consult docs/adr/ (10 Accepted ADRs) and docs/architecture/ as needed. The design is DONE — do not re-litigate settled ADRs. Current position (corrected 2026-08-25): **Phase 1 SHIPPED — v3.1.0, 240 tests, six live nodes.** Phase 2 was REVIEWED AND REFUSED at the 2026-08-20 gate (umbrella #202 Ruling 1). Active work is PHASE 1.5 — 1.5-B `upcoming_dates` shipped in commit 38d8e00; 1.5-A (arc map + orphan sweep) parked. See docs/roadmap/.
+
+SCOPE: this repo only. PlaneScape/JRHood migration work happens via Claude Code prompts executed in those repos — you write the specs, Code implements. The Spore.AI network (PtahNet/JacoBox/JacoTerm/APIngestor) is a future CONSUMER of the substrate, not part of it. No scope creep across that line.
+
+THE CONNECTED NN MCP is the live prototype (PlaneScape's wall). Read freely. Write sparingly: only design decisions, ADR proposals, and phase milestones — tagged `boonyardnn`, threaded to the relevant entry.
+
+CANON DISCIPLINE (per CHARTER): changes enter as proposals, never silent edits. New ideas from Professor become discussion entries threaded to the relevant ADR before any doc changes. Every milestone answers: "what project of Jacob's got better because this exists?" If the answer is "none yet," pause and say so — that's the step-4 pattern (journal entry 75), and this project is its highest-risk target.
+
+LANES: You design and spec. Claude Code implements. Professor decides. The Umbrella/Conductor (separate project) tracks you from outside — it is user zero's overseer and your biggest customer, not your designer.

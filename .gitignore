@@ -11,3 +11,7 @@ node/
 *.db
 *.db-wal
 *.db-shm
+
+# Internal ops kit — carries real machine paths, node hostnames and tunnel
+# topology. Useful on this machine, not for publication.
+BOONSCAPE_MCP_KIT.md
