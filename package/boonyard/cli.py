@@ -21,6 +21,8 @@ from .constants import DEFAULT_DB_FILENAME, DEFAULT_MCP_PORT, DEFAULT_NODE_DIRNA
 from .db import init_db, reindex
 from .export import export_bundle, import_bundle
 from .log import log_entry
+from .meter import default_meter_path
+from .meter import read_stats as _read_stats
 from .profile import load_profile, resolve_db_path, resolve_profile_path
 from .retag import retag_entry
 
@@ -243,6 +245,36 @@ def cmd_doctor(args) -> int:
     return EXIT_OK
 
 
+def _print_stats(result: dict) -> None:
+    """The meter as a plain table. Reads vs writes is the whole point."""
+    totals = result["totals"]
+    print(
+        f"== meter — {result['since']} to {result['until']} "
+        f"({result['window_days']}d, local) =="
+    )
+    print(f"  reads : {totals['reads']}")
+    print(f"  writes: {totals['writes']}")
+    print(f"  ratio : {totals['ratio']} reads per write")
+    if totals["writes"] and totals["ratio"] < 1:
+        print("  ** written more than it is read — the failure umbrella #228 audited. **")
+    if result["by_tool"]:
+        print("  by tool:")
+        for tool, n in result["by_tool"].items():
+            print(f"    {n:>5}  {tool}")
+    if result["by_day"]:
+        print("  by day:")
+        for day in result["by_day"]:
+            print(f"    {day['date']}  reads {day['reads']:>4}  writes {day['writes']:>4}")
+    _emit_warnings(
+        [f"[{w['kind']}] {w.get('node') or '-'} — {w['detail']}" for w in result["warnings"]]
+    )
+
+
+def cmd_meter(args) -> int:
+    _print_stats(_read_stats(args.within, meter_path=default_meter_path(_db(args))))
+    return EXIT_OK
+
+
 def cmd_reindex(args) -> int:
     reindex(db_path=_db(args), profile=_profile(args))
     print("reindexed.")
@@ -302,7 +334,14 @@ def cmd_mcp(args) -> int:
         print(
             f"serving aggregator ({len(nodes)} nodes, read-only, {auth}) on {args.host}:{args.port}"
         )
-        serve(aggregator=aggregator(nodes=nodes), host=args.host, port=args.port, api_key=key)
+        serve(
+            aggregator=aggregator(nodes=nodes),
+            host=args.host,
+            port=args.port,
+            api_key=key,
+            # The aggregator has no home node, so its meter lives beside its registry.
+            meter_path=Path(args.config).parent / "meter.db",
+        )
     else:
         db_path = _db(args)
         print(f"serving node {db_path} ({auth}) on {args.host}:{args.port}")
@@ -477,6 +516,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_skill)
 
     sub.add_parser("doctor", help="self-audit").set_defaults(func=cmd_doctor)
+    p = sub.add_parser("meter", help="read-vs-write traffic from the meter sidecar")
+    p.add_argument("--within", type=int, default=7, help="window in days (default 7)")
+    p.set_defaults(func=cmd_meter)
+
     sub.add_parser("reindex", help="rebuild FTS + entry_tag + extras indexes").set_defaults(
         func=cmd_reindex
     )

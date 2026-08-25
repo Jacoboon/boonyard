@@ -240,6 +240,60 @@ Semantics:
 Available in both single-node and aggregator deployments. In single-node mode `node` is the
 node's own name from `meta`; in aggregator mode it is the registry slug.
 
+### `read_stats`
+
+*Added 2026-08-25. Authority: umbrella #228 Layer 3 (the meter), routed as
+`Umbrella/CODE_ORDER_THE_METER.md`; same envelope convention as `upcoming_dates`.*
+
+```
+read_stats(
+    within_days: int = 7,
+    today: str | None = None,        # YYYY-MM-DD; default = the SERVER'S LOCAL date
+    scope: str | None | list[str] = None,
+) -> {
+    window_days: int, since: str, until: str,
+    totals:   {reads: int, writes: int, ratio: float},
+    by_tool:  {<tool name>: int, ...},
+    by_day:   [{date, reads, writes}, ...],
+    warnings: [{kind, node, detail}, ...],
+}
+```
+
+The meter. Every `tools/call` the server dispatches records one row — **tool name,
+timestamp, node and kind only** — into a **sidecar**, `meter.db`, beside the node's
+`journal.db`. `read_stats` reads that sidecar back.
+
+Why it exists: umbrella #228 audited thirteen instances of a seat answering from
+inference when the answer was already on a wall, and found that eight rule-shaped
+remedies each had a later violation while the two built as machinery held. The
+rules failed for a mechanical reason — **nobody could see the violation.** A seat
+that writes twelve entries and runs zero searches looks exactly like a seat that
+did its job. `ratio = reads / max(writes, 1)`; below 1 means the wall is being
+written more than it is consulted.
+
+Semantics and guarantees:
+- **The sidecar is never the journal.** House law (umbrella #30): node = memory,
+  sidecar = telemetry. Hundreds of rows a session inside `entry` would drown the
+  wall they exist to protect, and `entry` is append-only, so it would be permanent.
+- **Arguments are never recorded.** Not hashed, not truncated: not logged. A
+  `search_text` query can carry a person's name. `meter.record()` has no parameter
+  that could accept one, and a sentinel test reads the sidecar as raw bytes.
+- **The meter cannot break a read.** Every insert is fail-soft; a sidecar that
+  cannot be opened costs a row, never a response.
+- **Classification reuses `_WRITE_TOOLS`**, the same set that enforces read-only on
+  the aggregator endpoint, so the two cannot drift apart.
+- Window is `within_days` calendar days ending today inclusive, in LOCAL time.
+- Aggregator mode unions each scoped node's own sidecar and degrades per ADR-0003;
+  its own endpoint meters to a path the caller supplies (the CLI uses the
+  `umbrella.toml` directory), one row per call rather than one per node touched.
+
+⚠ **ATTRIBUTION LIMIT, stated rather than solved.** The bearer key is per-NODE, not
+per-seat, so the server cannot tell one caller from another. Writes carry `agent=`
+as a parameter; reads do not. The aggregate ratio is the number that matters —
+"yesterday: 12 writes, 0 searches" is damning regardless of who did it. Per-seat
+attribution would mean an optional `agent` param on every read tool, which is just
+another rule asking for discipline, and rules are what failed here.
+
 ### `list_nodes`
 
 ```
@@ -296,6 +350,7 @@ The substrate's self-audit. Exposed in OSS; in SaaS, throttled (it's a full-tabl
 - **Stable forever:** `log_entry`, `recent`, `by_id`, `search_by_tag`, `search_text`, `get_thread`, `list_tags`. These are the v1 contract. Their names and required parameters do not change.
 - **Stable since v3:** `search_by_tag_exact`, `log_skill_revision`, `list_skills`, `latest_skill`, `list_agents`, `list_entry_types`, `list_nodes`, `node_info`, `audit_doctor`.
 - **Added 2026-08-24:** `upcoming_dates` (additive; a minor-version bump is owed at the next release cut).
+- **Added 2026-08-25:** `read_stats` (additive; same pending minor bump).
 - **Additions are minor-version bumps; removals are major-version bumps.** A breaking change to any of the above bumps the package's major version, which (per `04_distribution.md`) means a schema migration too.
 
 ## Error model

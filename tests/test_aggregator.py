@@ -6,7 +6,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from boonyard import aggregator, init_db, log_entry
+from boonyard import aggregator, init_db, log_entry, meter
 from boonyard.aggregator import Aggregator
 
 # Pinned so days_out never drifts with the wall clock.
@@ -342,6 +342,74 @@ class UpcomingDatesAcrossNodesTests(unittest.TestCase):
         )
         result = self.agg.upcoming_dates(45, prefix="reviewdate", today=PINNED, scope="all")
         self.assertEqual([r["date"] for r in result["dates"]], ["2026-09-02"])
+
+
+class ReadStatsAcrossNodesTests(unittest.TestCase):
+    """Each node meters itself; the aggregator unions the sidecars (umbrella #228)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.paths = {}
+        for name in ("umbrella", "jrhood"):
+            path = d / name / "journal.db"
+            init_db(path, node_name=name)
+            self.paths[name] = str(path)
+        for _ in range(5):
+            meter.record(
+                meter.default_meter_path(self.paths["umbrella"]),
+                "search_text",
+                node="umbrella",
+                kind="read",
+                ts="2026-08-24T09:00:00",
+            )
+        for _ in range(2):
+            meter.record(
+                meter.default_meter_path(self.paths["jrhood"]),
+                "log_entry",
+                node="jrhood",
+                kind="write",
+                ts="2026-08-23T09:00:00",
+            )
+        self.v2 = d / "v2" / "journal.db"
+        _make_v2_node(self.v2)
+        self.agg = Aggregator(dict(self.paths))
+        self.with_broken = Aggregator({**self.paths, "v2_wall": str(self.v2)})
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_totals_union_across_nodes(self):
+        stats = self.agg.read_stats(7, today=PINNED, scope="all")
+        self.assertEqual(stats["totals"], {"reads": 5, "writes": 2, "ratio": 2.5})
+        self.assertEqual(stats["by_tool"], {"search_text": 5, "log_entry": 2})
+        self.assertEqual(
+            stats["by_day"],
+            [
+                {"date": "2026-08-23", "reads": 0, "writes": 2},
+                {"date": "2026-08-24", "reads": 5, "writes": 0},
+            ],
+        )
+
+    def test_scope_narrowing(self):
+        stats = self.agg.read_stats(7, today=PINNED, scope=["jrhood"])
+        self.assertEqual(stats["totals"]["reads"], 0)
+        self.assertEqual(stats["totals"]["writes"], 2)
+
+    def test_a_broken_node_warns_and_the_healthy_meters_still_report(self):
+        stats = self.with_broken.read_stats(7, today=PINNED, scope="all")
+        self.assertEqual(stats["totals"]["reads"], 5)
+        skipped = [w for w in stats["warnings"] if w["kind"] == "node_skipped"]
+        self.assertEqual(skipped[0]["node"], "v2_wall")
+
+    def test_a_node_with_no_meter_yet_warns_rather_than_raising(self):
+        d = Path(self._tmp.name) / "fresh" / "journal.db"
+        init_db(d, node_name="fresh")
+        agg = Aggregator({**self.paths, "fresh": str(d)})
+        stats = agg.read_stats(7, today=PINNED, scope="all")
+        absent = [w for w in stats["warnings"] if w["kind"] == "meter_absent"]
+        self.assertEqual(absent[0]["node"], "fresh")
+        self.assertEqual(stats["totals"]["reads"], 5)
 
 
 if __name__ == "__main__":

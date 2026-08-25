@@ -23,9 +23,10 @@ import re
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
+from .meter import collect_rows, default_meter_path, summarize
 from .profile import _safe_load_toml
 from .query import (
     _ENTRY_COLS,
@@ -342,6 +343,36 @@ class Aggregator:
                 }
             )
         return out
+
+    def read_stats(
+        self,
+        within_days: int = 7,
+        *,
+        today: date | str | None = None,
+        scope: Scope = None,
+    ) -> dict:
+        """Read-vs-write traffic across scope, unioned from each node's meter sidecar.
+
+        Same envelope as :func:`boonyard.meter.read_stats`. Each node meters itself
+        into its own ``meter.db``; this merges them. A node that cannot be read, or
+        that has no meter yet, contributes a warning instead of an exception —
+        the ADR-0003 degrade-don't-crash path, applied to telemetry.
+
+        Example:
+            agg.read_stats(7, scope="all")["totals"]["ratio"]
+        """
+        day = _coerce_today(today)
+        since = day - timedelta(days=max(within_days, 1) - 1)
+        names, warnings = self._healthy_scope(scope)
+        rows: list[dict] = []
+        for name in names:
+            node_rows, warning = collect_rows(
+                default_meter_path(self._nodes[name]), since, day, source=name
+            )
+            rows.extend(node_rows)
+            if warning is not None:
+                warnings.append(warning)
+        return summarize(rows, within_days, since, day, warnings)
 
     def upcoming_dates(
         self,

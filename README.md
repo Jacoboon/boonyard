@@ -4,7 +4,7 @@
 > Small on purpose. Owned by you. No lock-in, ever.
 
 **Status:** Phase 1 shipped. The `boonyard` package works — v3.1.0, zero runtime
-dependencies, 195 tests, 97% coverage — and has been running six live nodes in daily
+dependencies, 277 tests, 98% coverage — and has been running six live nodes in daily
 production use since 2026-07-18. The hosted service (`boonyardnn.com`) is designed and **not
 built**; see [Status detail](#status-detail).
 
@@ -158,10 +158,10 @@ thing this product wants to not be.
 
 **Shipped and working:**
 
-- The `boonyard` package — `package/boonyard/`, v3.1.0, stdlib only, 195 tests, 97% coverage.
+- The `boonyard` package — `package/boonyard/`, v3.1.0, stdlib only, 277 tests, 98% coverage.
 - Schema v3: closed 8-column `entry` table, FTS5 full-text index, `entry_tag` companion,
   `meta` + `meta_log`.
-- The CLI (21 commands), the Python API, backups, export/import bundles.
+- The CLI (22 commands), the Python API, backups, export/import bundles.
 - The over-many aggregator (read-only union across nodes, source-tagged).
 - The MCP server — 16 tools, bearer-key or capability-URL auth, streamable-HTTP compatible.
 - The full design canon: CHARTER, 10 ADRs, 9 architecture docs, glossary, 4-phase roadmap,

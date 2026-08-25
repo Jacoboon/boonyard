@@ -22,7 +22,7 @@ import hmac
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import query
+from . import meter, query
 from .constants import DEFAULT_MCP_PORT
 from .log import log_entry, log_skill_revision
 from .query import search_by_tag_exact
@@ -162,6 +162,22 @@ TOOL_DEFS: list[dict] = [
         },
         [],
     ),
+    _tool(
+        "read_stats",
+        "The meter: how often this wall is READ versus WRITTEN. Returns "
+        "{window_days, since, until, totals{reads,writes,ratio}, by_tool, by_day, "
+        "warnings}. A ratio below 1 means the wall is being written more than it is "
+        "consulted. Tool name and timestamp only \u2014 arguments are never recorded.",
+        {
+            "within_days": _INT,
+            "today": {
+                **_STR,
+                "description": "pin today as YYYY-MM-DD; default is the server's LOCAL date",
+            },
+            "scope": _SCOPE,
+        },
+        [],
+    ),
     _tool("list_nodes", "Configured nodes + metadata.", {}, []),
     _tool("node_info", "Full node metadata.", {"scope": _STR}, []),
     _tool("audit_doctor", "The substrate self-audit.", {"scope": _STR}, []),
@@ -182,6 +198,15 @@ def _dates_args(args: dict) -> dict:
     }
 
 
+def _stats_args(args: dict) -> dict:
+    """The read_stats kwargs, defaulted the same way in both server modes."""
+    within = args.get("within_days")
+    return {
+        "within_days": 7 if within is None else int(within),
+        "today": args.get("today"),
+    }
+
+
 def _tags_to_str(tags) -> str | None:
     if tags is None:
         return None
@@ -197,7 +222,9 @@ class MCPServer:
     over-many). ``handle(request)`` is pure and testable without HTTP.
     """
 
-    def __init__(self, db_path=None, *, aggregator=None, profile=None, api_key=None):
+    def __init__(
+        self, db_path=None, *, aggregator=None, profile=None, api_key=None, meter_path=None
+    ):
         if db_path is None and aggregator is None:
             raise ValueError("MCPServer requires a db_path or an aggregator")
         self._db = db_path
@@ -205,6 +232,15 @@ class MCPServer:
         self._profile = profile
         self._api_key = api_key
         self._read_only = aggregator is not None
+        # The meter (umbrella #228 Layer 3) lives beside the node it measures. In
+        # aggregator mode there is no single home node, so the caller supplies one
+        # (the CLI uses the umbrella.toml's directory); without it, metering is off
+        # and read_stats says so in warnings rather than pretending to be zero.
+        if meter_path is None and db_path is not None:
+            meter_path = meter.default_meter_path(db_path)
+        self._meter_path = meter_path
+        self._node_name: str | None = None
+        self._node_name_resolved = False
 
     # -- JSON-RPC entry ----------------------------------------------------
     def handle(self, request: dict) -> dict | None:
@@ -250,6 +286,37 @@ class MCPServer:
             },
         }
 
+    # -- the meter ---------------------------------------------------------
+    def _meter_node(self, args: dict) -> str | None:
+        """Which node this call was served against, for the meter's ``node`` column."""
+        if self._agg is not None:
+            scope = args.get("scope")
+            if isinstance(scope, str):
+                return scope
+            return ",".join(str(s) for s in scope) if scope else "all"
+        if not self._node_name_resolved:  # resolved once, then cached
+            self._node_name_resolved = True
+            try:
+                self._node_name = query.node_info(db_path=self._db)["name"]
+            except Exception:  # noqa: BLE001 — never let identity lookup break a call
+                self._node_name = None
+        return self._node_name
+
+    def _meter(self, name: str, args: dict) -> None:
+        """Count one tool call. Tool name, node and kind only — never arguments.
+
+        ``args`` is passed in solely to name the node; nothing from it is stored,
+        and :func:`boonyard.meter.record` does not accept arguments at all.
+        Classification reuses ``_WRITE_TOOLS`` so it cannot drift from the
+        read-only enforcement above.
+        """
+        meter.record(
+            self._meter_path,
+            name,
+            node=self._meter_node(args),
+            kind="write" if name in _WRITE_TOOLS else "read",
+        )
+
     # -- tool dispatch -----------------------------------------------------
     def _call_tool(self, name, args: dict):
         if name not in _TOOL_NAMES:
@@ -262,6 +329,9 @@ class MCPServer:
                 "read_only",
                 "aggregator endpoint is read-only; address a specific node to write",
             )
+        # Counted before dispatch: an attempt that then errors is still an attempt,
+        # and record() cannot raise, so this can never break the call below.
+        self._meter(name, args)
         if self._agg is not None:
             return self._call_aggregator(name, args)
         return self._call_single(name, args)
@@ -321,6 +391,8 @@ class MCPServer:
             return query.latest_skill(args["slug"], db_path=db)
         if name == "upcoming_dates":
             return query.upcoming_dates(db_path=db, **_dates_args(args))
+        if name == "read_stats":
+            return meter.read_stats(meter_path=self._meter_path, **_stats_args(args))
         if name == "node_info":
             return query.node_info(db_path=db, profile=self._profile)
         if name == "audit_doctor":
@@ -365,6 +437,8 @@ class MCPServer:
             return agg.list_entry_types(scope=scope)
         if name == "upcoming_dates":
             return agg.upcoming_dates(scope=scope, **_dates_args(args))
+        if name == "read_stats":
+            return agg.read_stats(scope=scope, **_stats_args(args))
         if name == "list_nodes":
             return agg.list_nodes()
         raise MCPError("validation", f"tool {name!r} is not available on the aggregator endpoint")
@@ -465,11 +539,18 @@ def serve(
     aggregator=None,
     profile=None,
     api_key=None,
+    meter_path=None,
     host: str = "127.0.0.1",
     port: int = DEFAULT_MCP_PORT,
 ) -> None:
     """Run the MCP server forever on ``host:port`` (blocks). Ctrl-C to stop."""
-    server = MCPServer(db_path=db_path, aggregator=aggregator, profile=profile, api_key=api_key)
+    server = MCPServer(
+        db_path=db_path,
+        aggregator=aggregator,
+        profile=profile,
+        api_key=api_key,
+        meter_path=meter_path,
+    )
     httpd = make_httpd(server, host, port)
     try:
         httpd.serve_forever()

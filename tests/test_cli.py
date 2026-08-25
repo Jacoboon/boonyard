@@ -366,5 +366,34 @@ class UmbrellaDatesTests(unittest.TestCase):
         self.assertIn("v2_wall", err)
 
 
+class MeterCliTests(CliTestCase):
+    def test_meter_reports_reads_and_writes(self):
+        from boonyard import meter
+
+        path = meter.default_meter_path(self.db)
+        meter.record(path, "search_text", node="test", kind="read")
+        meter.record(path, "log_entry", node="test", kind="write")
+        code, out, _ = run(["--db", self.db, "meter"])
+        self.assertEqual(code, 0)
+        self.assertIn("reads : 1", out)
+        self.assertIn("writes: 1", out)
+        self.assertIn("search_text", out)
+
+    def test_meter_flags_a_wall_written_more_than_it_is_read(self):
+        from boonyard import meter
+
+        path = meter.default_meter_path(self.db)
+        for _ in range(12):
+            meter.record(path, "log_entry", node="test", kind="write")
+        _, out, _ = run(["--db", self.db, "meter"])
+        self.assertIn("written more than it is read", out)
+
+    def test_meter_with_no_sidecar_yet_warns_and_exits_zero(self):
+        code, out, err = run(["--db", self.db, "meter"])
+        self.assertEqual(code, 0)
+        self.assertIn("reads : 0", out)
+        self.assertIn("meter_absent", err)
+
+
 if __name__ == "__main__":
     unittest.main()

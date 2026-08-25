@@ -13,6 +13,7 @@ from .db import connect, init_db, reindex, schema_version
 from .export import export_bundle, import_bundle
 from .log import log_entry, log_skill_revision, validate_entry
 from .mcp import MCPServer, serve
+from .meter import read_stats
 from .profile import (
     Profile,
     default_profile,
@@ -65,6 +66,7 @@ __all__ = [
     "log_entry",
     "log_skill_revision",
     "node_info",
+    "read_stats",
     "recent",
     "reindex",
     "resolve_db_path",

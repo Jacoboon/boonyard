@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 from boonyard import init_db, log_entry, upcoming_dates
+from boonyard import meter as boonyard_meter
 from boonyard.aggregator import Aggregator
 from boonyard.mcp import MCPServer, make_httpd
 
@@ -62,6 +63,7 @@ class ToolSurfaceTests(unittest.TestCase):
             "list_skills",
             "latest_skill",
             "upcoming_dates",
+            "read_stats",
             "list_nodes",
             "node_info",
             "audit_doctor",
@@ -198,6 +200,7 @@ class ToolCallTests(unittest.TestCase):
             ("list_skills", {}),
             ("latest_skill", {"slug": "fuse-boot"}),
             ("upcoming_dates", {}),
+            ("read_stats", {}),
         ]:
             payload, err = _call(self.server, name, args)
             self.assertIsNone(err, f"{name} errored: {err}")
@@ -253,6 +256,7 @@ class AggregatorModeTests(unittest.TestCase):
             ("list_entry_types", {}),
             ("list_nodes", {}),
             ("upcoming_dates", {}),
+            ("read_stats", {}),
         ]:
             payload, err = _call(self.server, name, args)
             self.assertIsNone(err, f"{name} errored: {err}")
@@ -576,6 +580,212 @@ class UpcomingDatesToolTests(unittest.TestCase):
         payload = json.loads(body["result"]["content"][0]["text"])
         self.assertEqual(len(payload["dates"]), 3)
         self.assertTrue(payload["dates"][0]["overdue"])
+
+
+class MeterTests(unittest.TestCase):
+    """The meter, at the layer that actually serves traffic (umbrella #228 Layer 3)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.db = str(d / "node" / "journal.db")
+        init_db(self.db, node_name="umbrella")
+        log_entry("code", "note", "a thing worth finding", tags="seed", db_path=self.db)
+        self.meter_db = Path(self.db).parent / "meter.db"
+        self.server = MCPServer(db_path=self.db)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _meter_rows(self):
+        conn = sqlite3.connect(self.meter_db)
+        conn.row_factory = sqlite3.Row
+        try:
+            return [dict(r) for r in conn.execute("SELECT ts, tool, node, kind FROM meter")]
+        finally:
+            conn.close()
+
+    def test_meter_defaults_to_the_node_s_sibling(self):
+        _call(self.server, "recent", {})
+        self.assertTrue(self.meter_db.exists(), "the sidecar lands beside journal.db")
+
+    def test_a_read_records_exactly_one_read_row(self):
+        _call(self.server, "search_text", {"query": "thing"})
+        rows = self._meter_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["tool"], "search_text")
+        self.assertEqual(rows[0]["kind"], "read")
+        self.assertEqual(rows[0]["node"], "umbrella")
+
+    def test_a_write_records_exactly_one_write_row(self):
+        _call(
+            self.server,
+            "log_entry",
+            {"agent": "code", "entry_type": "note", "content": "written"},
+        )
+        rows = self._meter_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["tool"], rows[0]["kind"]), ("log_entry", "write"))
+
+    def test_classification_follows_the_existing_write_tool_set(self):
+        """Reuses _WRITE_TOOLS rather than a second list that could drift from it."""
+        from boonyard.mcp import _WRITE_TOOLS
+
+        _call(self.server, "log_skill_revision", {"slug": "s", "content": "c", "agent": "code"})
+        _call(self.server, "list_tags", {})
+        kinds = {r["tool"]: r["kind"] for r in self._meter_rows()}
+        self.assertEqual(kinds["log_skill_revision"], "write")
+        self.assertEqual(kinds["list_tags"], "read")
+        self.assertEqual(_WRITE_TOOLS, {"log_entry", "log_skill_revision"})
+
+    def test_an_unknown_tool_is_not_counted(self):
+        _call(self.server, "no_such_tool", {})
+        self.assertFalse(self.meter_db.exists())
+
+    def test_the_meter_cannot_break_a_read(self):
+        """A METER THAT CAN BREAK A READ IS WORSE THAN NO METER.
+
+        The sidecar's parent is a FILE here, so every insert fails. The read must
+        still return its rows. Reintroduce a raising insert and this fails.
+        """
+        blocker = Path(self._tmp.name) / "blocker"
+        blocker.write_text("not a directory", encoding="utf-8")
+        broken = MCPServer(db_path=self.db, meter_path=blocker / "meter.db")
+        payload, err = _call(broken, "recent", {})
+        self.assertIsNone(err, f"a dead meter must not surface as a tool error: {err}")
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["content"], "a thing worth finding")
+        payload, err = _call(broken, "search_text", {"query": "thing"})
+        self.assertIsNone(err)
+        self.assertEqual(len(payload), 1)
+
+    def test_arguments_are_never_persisted(self):
+        """A search query can carry a homeowner's name. It must not reach the disk.
+
+        Sentinel through the real tool path, then the sidecar is read as RAW BYTES
+        — not via SQL — so a value hidden in any column or index still fails this.
+        """
+        sentinel = "SENTINEL_STRING_XYZ"
+        _call(self.server, "search_text", {"query": sentinel})
+        _call(self.server, "search_by_tag", {"tag": sentinel})
+        _call(self.server, "latest_skill", {"slug": sentinel})
+        _call(
+            self.server,
+            "log_entry",
+            {"agent": "code", "entry_type": "note", "content": sentinel},
+        )
+        blob = self.meter_db.read_bytes()
+        self.assertNotIn(sentinel.encode(), blob, "an argument reached the meter")
+        # ...and the rows that DO exist are the four calls, by name only.
+        self.assertEqual(len(self._meter_rows()), 4)
+
+    def test_read_stats_reports_the_traffic_it_just_served(self):
+        for _ in range(3):
+            _call(self.server, "recent", {})
+        _call(self.server, "log_entry", {"agent": "code", "entry_type": "note", "content": "x"})
+        payload, err = _call(self.server, "read_stats", {})
+        self.assertIsNone(err)
+        # 3 recents + 1 write + this read_stats call itself (the observer effect).
+        self.assertEqual(payload["totals"]["writes"], 1)
+        self.assertEqual(payload["totals"]["reads"], 4)
+        self.assertEqual(payload["totals"]["ratio"], 4.0)
+        self.assertEqual(payload["by_tool"]["recent"], 3)
+        self.assertEqual(payload["by_tool"]["log_entry"], 1)
+
+    def test_read_stats_tool_matches_the_python_call(self):
+        _call(self.server, "recent", {})
+        payload, err = _call(self.server, "read_stats", {"within_days": 7, "today": "2026-08-25"})
+        self.assertIsNone(err)
+        expected = boonyard_meter.read_stats(7, today="2026-08-25", meter_path=self.meter_db)
+        # The tool call itself was metered before the Python call ran, so compare
+        # the shape and the by_tool counts that both saw.
+        self.assertEqual(set(payload), set(expected))
+        self.assertEqual(payload["since"], expected["since"])
+        self.assertEqual(payload["until"], expected["until"])
+        self.assertEqual(payload["by_tool"]["recent"], expected["by_tool"]["recent"])
+
+    def test_read_stats_defaults_to_a_seven_day_window(self):
+        payload, _ = _call(self.server, "read_stats", {})
+        self.assertEqual(payload["window_days"], 7)
+
+    def test_read_stats_over_real_http(self):
+        """The only reader this meter has is a cloud session with no filesystem."""
+        _call(self.server, "recent", {})
+        httpd = make_httpd(self.server, port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{httpd.server_address[1]}/",
+            data=json.dumps(_rpc("tools/call", {"name": "read_stats", "arguments": {}})).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            body = json.loads(resp.read())
+        payload = json.loads(body["result"]["content"][0]["text"])
+        self.assertGreaterEqual(payload["totals"]["reads"], 1)
+
+
+class MeterAggregatorTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.a = str(d / "a" / "journal.db")
+        self.b = str(d / "b" / "journal.db")
+        init_db(self.a, node_name="alpha")
+        init_db(self.b, node_name="beta")
+        self.v2 = d / "v2" / "journal.db"
+        self.v2.parent.mkdir(parents=True)
+        conn = sqlite3.connect(self.v2)
+        conn.execute("CREATE TABLE journal (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        # Each node meters itself; the aggregator unions them.
+        boonyard_meter.record(
+            boonyard_meter.default_meter_path(self.a), "search_text", node="alpha", kind="read"
+        )
+        boonyard_meter.record(
+            boonyard_meter.default_meter_path(self.b), "log_entry", node="beta", kind="write"
+        )
+        self.agg = Aggregator({"a": self.a, "b": self.b, "v2_wall": str(self.v2)})
+        self.server = MCPServer(aggregator=self.agg, meter_path=d / "agg_meter.db")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_aggregator_unions_the_per_node_meters(self):
+        payload, err = _call(self.server, "read_stats", {"scope": "all"})
+        self.assertIsNone(err)
+        self.assertEqual(payload["totals"]["reads"], 1)
+        self.assertEqual(payload["totals"]["writes"], 1)
+        self.assertEqual(payload["by_tool"], {"log_entry": 1, "search_text": 1})
+
+    def test_a_broken_node_warns_and_the_healthy_ones_still_report(self):
+        payload, err = _call(self.server, "read_stats", {"scope": "all"})
+        self.assertIsNone(err)
+        skipped = [w for w in payload["warnings"] if w["kind"] == "node_skipped"]
+        self.assertEqual(skipped[0]["node"], "v2_wall")
+        self.assertEqual(payload["totals"]["reads"], 1)
+
+    def test_aggregator_meters_one_row_per_call_not_one_per_node(self):
+        """Six nodes in scope must not inflate the read count sixfold."""
+        _call(self.server, "recent", {"scope": "all"})
+        conn = sqlite3.connect(Path(self._tmp.name) / "agg_meter.db")
+        try:
+            rows = conn.execute("SELECT tool, node, kind FROM meter").fetchall()
+        finally:
+            conn.close()
+        self.assertEqual(len([r for r in rows if r[0] == "recent"]), 1)
+        self.assertEqual([r for r in rows if r[0] == "recent"][0][1], "all")
+
+    def test_scope_narrowing_is_recorded_by_name(self):
+        _call(self.server, "recent", {"scope": ["a"]})
+        conn = sqlite3.connect(Path(self._tmp.name) / "agg_meter.db")
+        try:
+            node = conn.execute("SELECT node FROM meter WHERE tool = 'recent'").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(node, "a")
 
 
 if __name__ == "__main__":
