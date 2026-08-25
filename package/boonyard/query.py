@@ -12,6 +12,8 @@ is the in-process form of the MCP read tools; the MCP layer (M7) wraps it.
 
 import json
 import logging
+import re
+from datetime import date, datetime
 from pathlib import Path
 from sqlite3 import Connection, OperationalError
 from typing import TYPE_CHECKING
@@ -295,6 +297,175 @@ def latest_skill(
             (f"skill-{slug}",),
         ).fetchone()
     return _row_to_entry(row) if row is not None else None
+
+
+# --------------------------------------------------------------------------
+# Dated entries — the kill-date tripwire (umbrella #202 Ruling 4)
+# --------------------------------------------------------------------------
+# A kill-date is DECLARED, never inferred: it is an entry tagged
+# ``killdate:YYYY-MM-DD``. The reader parses the tag; nothing guesses at dates in
+# prose. Same namespace culture as ``case:`` / ``arc:`` / ``model:`` (ADR-0009),
+# same parse-the-tag precedent as ``_extract_slug`` above.
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _coerce_today(today: date | str | None) -> date:
+    """Today as a real ``date`` — **local wall-clock** by default, never UTC.
+
+    ``date.today()`` is localtime; ``datetime.utcnow().date()`` is not, and this
+    stack has been bitten by that drift twice in three days (umbrella #53, #200).
+    Callers pin ``today`` (a ``date`` or ``'YYYY-MM-DD'``) to make it exact.
+    """
+    if today is None:
+        return date.today()
+    if isinstance(today, datetime):
+        return today.date()
+    if isinstance(today, date):
+        return today
+    return date.fromisoformat(str(today))
+
+
+def _extract_dated_tags(tags: list[str], prefix: str) -> tuple[list[tuple[str, date]], list[str]]:
+    """Split ``<prefix>:...`` tags into ``(tag, date)`` pairs plus malformed leftovers.
+
+    The ``_extract_slug`` precedent, one namespace over. Anything under the prefix
+    that is not a real ``YYYY-MM-DD`` comes back in the second list for the
+    caller's ``warnings`` channel — it is skipped, never raised (ADR-0003's
+    soft-validation spirit: the substrate captures, it does not gatekeep).
+
+    Example:
+        _extract_dated_tags(["killdate:2026-09-23", "killdate:soon"], "killdate")
+        # -> ([("killdate:2026-09-23", date(2026, 9, 23))], ["killdate:soon"])
+    """
+    head = f"{prefix}:"
+    good: list[tuple[str, date]] = []
+    malformed: list[str] = []
+    for tag in tags:
+        if not tag.startswith(head):
+            continue
+        value = tag[len(head) :]
+        if not _ISO_DATE.match(value):
+            malformed.append(tag)
+            continue
+        try:
+            good.append((tag, date.fromisoformat(value)))
+        except ValueError:  # right shape, impossible calendar (killdate:2026-13-40)
+            malformed.append(tag)
+    return good, malformed
+
+
+def _dated_entry_rows(
+    entry: dict, prefix: str, day: date, within_days: int, node: str | None
+) -> tuple[list[dict], list[dict]]:
+    """One entry's dated tags -> (result rows, warnings). Shared with the aggregator.
+
+    **A past date is never filtered out.** It returns with ``overdue=True`` and a
+    negative ``days_out`` and keeps returning until a human retires it: silence on
+    an already-passed date is the 2026-08-20 failure this reader exists to kill.
+    Only the future side of the window is bounded.
+    """
+    rows: list[dict] = []
+    warnings: list[dict] = []
+    good, malformed = _extract_dated_tags(entry["tags"], prefix)
+    for tag in malformed:
+        warnings.append(
+            {
+                "kind": "malformed_date_tag",
+                "node": node,
+                "entry_id": entry["id"],
+                "tag": tag,
+                "detail": f"{tag!r} is not {prefix}:YYYY-MM-DD — skipped, not raised",
+            }
+        )
+    for _tag, value in good:  # the tag is reconstructible from prefix + date
+        days_out = (value - day).days
+        if days_out > within_days:
+            continue  # beyond the forward window; the past side is deliberately open
+        rows.append(
+            {
+                "date": value.isoformat(),
+                "days_out": days_out,
+                "overdue": days_out < 0,
+                "entry_id": entry["id"],
+                "node": node,
+                "agent": entry["agent"],
+                "prefix": prefix,
+                "headline": " ".join(entry["content"].split())[:120],
+                "tags": entry["tags"],
+            }
+        )
+    return rows, warnings
+
+
+def _dates_envelope(
+    day: date, within_days: int, prefix: str, rows: list[dict], warnings: list[dict]
+) -> dict:
+    """Sort soonest-first (overdue at the top) and wrap in the result envelope."""
+    rows.sort(key=lambda r: (r["date"], r["node"] or "", r["entry_id"]))
+    return {
+        "today": day.isoformat(),
+        "within_days": within_days,
+        "prefix": prefix,
+        "dates": rows,
+        "warnings": warnings,
+    }
+
+
+def _node_name(c: Connection) -> str | None:
+    """This node's own name from ``meta``, or None if it can't be read."""
+    try:
+        row = c.execute("SELECT value FROM meta WHERE key = 'node_name'").fetchone()
+    except OperationalError:
+        return None
+    return row["value"] if row is not None else None
+
+
+def upcoming_dates(
+    within_days: int = 45,
+    *,
+    prefix: str = "killdate",
+    today: date | str | None = None,
+    conn: Connection | None = None,
+    db_path: str | Path | None = None,
+) -> dict:
+    """The kill-date register: entries tagged ``<prefix>:YYYY-MM-DD``, soonest first.
+
+    Returns an envelope, not a bare list, because the warnings channel is
+    load-bearing (a malformed tag or a skipped node must be *seen*, not silently
+    dropped)::
+
+        {"today": "2026-08-24", "within_days": 45, "prefix": "killdate",
+         "dates": [{date, days_out, overdue, entry_id, node, agent, prefix,
+                    headline, tags}, ...],
+         "warnings": [{kind, node, entry_id, tag, detail}, ...]}
+
+    Overdue dates sort to the top and **never drop out of the window**; only the
+    future side is bounded by ``within_days``. ``days_out`` is measured against the
+    local wall-clock date (see :func:`_coerce_today`).
+
+    Example:
+        upcoming_dates(45, db_path="node/journal.db")["dates"][0]["overdue"]
+    """
+    day = _coerce_today(today)
+    with resolve_conn(conn, db_path, read_only=True) as c:
+        node = _node_name(c)
+        # entry_tag is the indexed lookup (the search_by_tag_exact path). The LIKE
+        # is only a prefilter — _extract_dated_tags is the authority on what counts.
+        rows = c.execute(
+            f"SELECT {_ENTRY_COLS} FROM entry "
+            "WHERE id IN (SELECT entry_id FROM entry_tag WHERE tag LIKE ?) "
+            "ORDER BY id",
+            (f"{prefix}:%",),
+        ).fetchall()
+    dates: list[dict] = []
+    warnings: list[dict] = []
+    for row in rows:
+        entry_rows, entry_warnings = _dated_entry_rows(
+            _row_to_entry(row), prefix, day, within_days, node
+        )
+        dates.extend(entry_rows)
+        warnings.extend(entry_warnings)
+    return _dates_envelope(day, within_days, prefix, dates, warnings)
 
 
 # --------------------------------------------------------------------------

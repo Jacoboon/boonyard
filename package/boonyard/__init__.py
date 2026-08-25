@@ -34,6 +34,7 @@ from .query import (
     search_by_tag,
     search_by_tag_exact,
     search_text,
+    upcoming_dates,
 )
 from .retag import retag_entry
 
@@ -74,5 +75,6 @@ __all__ = [
     "search_by_tag",
     "search_by_tag_exact",
     "search_text",
+    "upcoming_dates",
     "validate_entry",
 ]

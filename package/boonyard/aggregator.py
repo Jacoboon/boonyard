@@ -11,17 +11,33 @@ merged in Python (arch 03 §Attached-DB limit).
 
 Cross-node writes, threads, foreign keys, and transactions are out of scope by
 design (arch 03 §What scope does NOT do): scope unions reads, nothing more.
+
+A node that cannot serve a v3 read is **skipped, not raised** (ADR-0003, dated
+clarification 2026-08-24): one v2-schema straggler in the registry used to take
+down reads across every node in the union (boonyard #76 Finding 2). Capture,
+don't crash — the skip comes back as a warning instead.
 """
 
+import logging
 import re
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 from .profile import _safe_load_toml
-from .query import _ENTRY_COLS, _row_to_entry, node_info
+from .query import (
+    _ENTRY_COLS,
+    _coerce_today,
+    _dated_entry_rows,
+    _dates_envelope,
+    _row_to_entry,
+    node_info,
+)
 from .query import search_text as _node_search_text
+
+_log = logging.getLogger("boonyard")
 
 # Safe margin below SQLite's default SQLITE_MAX_ATTACHED (10).
 _MAX_ATTACH = 8
@@ -57,6 +73,8 @@ class Aggregator:
         return dict(self._nodes)
 
     def _resolve_scope(self, scope: Scope) -> list[str]:
+        """Scope -> node names. An unknown NAME still raises: that is a caller
+        error, not an environment failure (a broken node is the latter, _probe)."""
         if scope is None or scope in ("all", "current"):
             return list(self._nodes)
         names = [scope] if isinstance(scope, str) else list(scope)
@@ -64,6 +82,58 @@ class Aggregator:
             if name not in self._nodes:
                 raise ValueError(f"unknown node in scope: {name!r}")
         return names
+
+    def _probe(self, name: str) -> str | None:
+        """Why this node can't be read, or None if it can (ADR-0003 clarification).
+
+        Cheap and per-call: one open, one ``sqlite_master`` lookup. Per-call so a
+        node that comes back healthy is picked up without restarting a standing
+        MCP service. Only opens files that already exist, so probing never
+        creates a stray node file.
+
+        Deliberately NOT ``db.connect()``: that applies ``PRAGMA journal_mode =
+        WAL`` before ``query_only``, which would try to *modify* a file we have
+        just decided we may not understand. A probe must never write to the thing
+        it is probing.
+        """
+        path = self._nodes[name]
+        if not Path(path).exists():
+            return f"node file not found: {path}"
+        try:
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute("PRAGMA query_only = ON")
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') "
+                    "AND name = 'entry'"
+                ).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:  # not a database, locked, corrupt...
+            return f"unreadable: {exc}"
+        if row is None:
+            return "no v3 'entry' table (pre-v3 schema or not a boonyard node)"
+        return None
+
+    def _healthy_scope(self, scope: Scope) -> tuple[list[str], list[dict]]:
+        """Resolve scope, then drop the nodes that can't serve a read.
+
+        Returns ``(healthy_names, warnings)``. A broken node degrades the union;
+        it never kills it (boonyard #76 Finding 2 — one v2 node crashed reads
+        across all six). The warning names the node and the reason, so the
+        failure stays loud somewhere: a reader that silently returns nothing is
+        the ``visit_watch`` failure (jrhood #174), not a fix.
+        """
+        healthy: list[str] = []
+        warnings: list[dict] = []
+        for name in self._resolve_scope(scope):
+            reason = self._probe(name)
+            if reason is None:
+                healthy.append(name)
+                continue
+            warnings.append({"kind": "node_skipped", "node": name, "detail": reason})
+            _log.warning("node %r skipped: %s", name, reason)
+        return healthy, warnings
 
     @contextmanager
     def _attach(self, names: list[str]) -> Iterator[sqlite3.Connection]:
@@ -110,7 +180,7 @@ class Aggregator:
         scope: Scope = None,
     ) -> list[dict]:
         """Newest-first across scope, optionally filtered by agent / entry_type."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         where = "WHERE (? IS NULL OR agent = ?) AND (? IS NULL OR entry_type = ?)"
         rows = self._collect_entries(names, where, [agent, agent, entry_type, entry_type], "", [])
         rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
@@ -118,7 +188,7 @@ class Aggregator:
 
     def by_id(self, entry_id: int, *, scope: Scope = None) -> dict | None:
         """The first entry with this (node-local) id in scope order, or None."""
-        for name in self._resolve_scope(scope):
+        for name in self._healthy_scope(scope)[0]:
             with self._attach([name]) as conn:
                 row = conn.execute(
                     f"SELECT '{name}' AS source, {_ENTRY_COLS} FROM \"{name}\".entry WHERE id = ?",
@@ -130,7 +200,7 @@ class Aggregator:
 
     def get_thread(self, root_id: int, *, scope: Scope = None) -> list[dict]:
         """Root + direct children across scope (threads are node-local; ADR-0004)."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         rows = self._collect_entries(
             names, "WHERE id = ? OR related_id = ?", [root_id, root_id], "", []
         )
@@ -139,14 +209,14 @@ class Aggregator:
 
     def search_by_tag(self, tag: str, limit: int = 20, *, scope: Scope = None) -> list[dict]:
         """Substring tag match across scope, newest-first."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         rows = self._collect_entries(names, "WHERE tags LIKE ?", [f"%{tag}%"], "", [])
         rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
         return [_row_to_entry(r, source=r["source"]) for r in rows[:limit]]
 
     def search_by_tag_exact(self, tag: str, limit: int = 20, *, scope: Scope = None) -> list[dict]:
         """Exact tag equality (via ``entry_tag``) across scope, newest-first."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         rows: list[sqlite3.Row] = []
         for chunk in _chunks(names, _MAX_ATTACH):
             legs, params = [], []
@@ -171,7 +241,7 @@ class Aggregator:
         merges — each node opened read-only, results tagged with ``source``.
         """
         entries: list[dict] = []
-        for name in self._resolve_scope(scope):
+        for name in self._healthy_scope(scope)[0]:
             for entry in _node_search_text(query, limit, db_path=self._nodes[name]):
                 entry["source"] = name
                 entries.append(entry)
@@ -196,7 +266,7 @@ class Aggregator:
         self, prefix: str | None = None, tree: bool = False, *, scope: Scope = None
     ) -> list[dict] | dict[str, list[dict]]:
         """The unioned tag menu across scope, counts summed, most-used first."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         totals = self._aggregate_counts(
             names,
             'SELECT tag, COUNT(*) AS n FROM "{node}".entry_tag '
@@ -216,7 +286,7 @@ class Aggregator:
 
     def list_agents(self, *, scope: Scope = None) -> list[dict]:
         """Unioned agent counts across scope."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         totals = self._aggregate_counts(
             names, 'SELECT agent, COUNT(*) AS n FROM "{node}".entry GROUP BY agent', []
         )
@@ -227,7 +297,7 @@ class Aggregator:
 
     def list_entry_types(self, *, scope: Scope = None) -> list[dict]:
         """Unioned entry_type counts across scope."""
-        names = self._resolve_scope(scope)
+        names, _ = self._healthy_scope(scope)
         totals = self._aggregate_counts(
             names, 'SELECT entry_type, COUNT(*) AS n FROM "{node}".entry GROUP BY entry_type', []
         )
@@ -237,9 +307,28 @@ class Aggregator:
         )
 
     def list_nodes(self) -> list[dict]:
-        """Metadata for each configured node (name, slug, counts, timestamps)."""
+        """Metadata for each configured node (name, slug, counts, timestamps).
+
+        Also the health surface: a node that fails :meth:`_probe` is listed with
+        ``healthy=False`` and the reason in ``warning`` rather than taking the
+        whole listing down with it. This is how a cloud seat sees a bad node.
+        """
         out = []
         for slug, path in self._nodes.items():
+            reason = self._probe(slug)
+            if reason is not None:
+                out.append(
+                    {
+                        "name": slug,
+                        "slug": slug,
+                        "created_at": None,
+                        "entry_count": None,
+                        "last_write_at": None,
+                        "healthy": False,
+                        "warning": reason,
+                    }
+                )
+                continue
             info = node_info(db_path=path)
             out.append(
                 {
@@ -248,9 +337,47 @@ class Aggregator:
                     "created_at": info["created_at"],
                     "entry_count": info["entry_count"],
                     "last_write_at": info["last_write_at"],
+                    "healthy": True,
+                    "warning": None,
                 }
             )
         return out
+
+    def upcoming_dates(
+        self,
+        within_days: int = 45,
+        *,
+        prefix: str = "killdate",
+        today: date | str | None = None,
+        scope: Scope = None,
+    ) -> dict:
+        """The kill-date register across scope, merged and re-sorted by date.
+
+        Same envelope as :func:`boonyard.query.upcoming_dates`, with ``node`` set
+        to each row's registry slug and with any skipped node reported in
+        ``warnings`` alongside malformed tags. Overdue dates sort to the top and
+        never drop out.
+
+        Example:
+            agg.upcoming_dates(45, scope="all")["dates"]
+        """
+        day = _coerce_today(today)
+        names, warnings = self._healthy_scope(scope)
+        # tags is the CSV column; the LIKE is a prefilter and _dated_entry_rows is
+        # the authority. Goes through _collect_entries — no second ATTACH path.
+        rows = self._collect_entries(names, "WHERE tags LIKE ?", [f"%{prefix}:%"], "", [])
+        dates: list[dict] = []
+        for row in rows:
+            entry_rows, entry_warnings = _dated_entry_rows(
+                _row_to_entry(row, source=row["source"]),
+                prefix,
+                day,
+                within_days,
+                row["source"],
+            )
+            dates.extend(entry_rows)
+            warnings.extend(entry_warnings)
+        return _dates_envelope(day, within_days, prefix, dates, warnings)
 
 
 def aggregator(

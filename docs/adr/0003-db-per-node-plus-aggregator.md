@@ -157,6 +157,45 @@ spore       = "/home/jacob/Code/Spore/journal.db"
 vectorscape = "/home/jacob/Code/PlaneScape/server/worlds/world-prime/journal.db"
 ```
 
+## Clarification — 2026-08-24: a broken node degrades the union, it does not kill it
+
+*Added in place per `docs/adr/README.md` §Changing an ADR ("for a small clarification: edit
+in place, note the date"). This resolves the open design question raised by the Code seat at
+boonyard node entry 76, Finding 2. Authority: umbrella #202 Ruling 4 (standing law), routed
+as `Umbrella/CODE_ORDER_BOONYARD_15B.md` §2, logged at umbrella #209. It narrows an
+under-specified sentence in Consequences; it reverses nothing.*
+
+The Consequences section above says the read layer "handles the column differences (none, by
+ADR-0002) or **refuses to aggregate** non-mutually-compatible versions." As implemented, the
+refusal was total: a single registered node that did not present a v3 `entry` table raised
+`no such table: <node>.entry` and took down reads across **every** node in the union. That
+happened in the field — one v2-schema wall in `umbrella.toml` made *every* `boonyard umbrella
+recent` fail, and it was worked around by deregistering the node.
+
+**Clarified:** "refuses to aggregate" means refuses to aggregate **that node**, not the query.
+
+- The aggregator probes each node in scope before reading it (existence, openability, and the
+  presence of a v3 `entry` table). The probe is read-only and never writes to the file it is
+  probing — notably it does not go through `db.connect()`, which would apply
+  `PRAGMA journal_mode = WAL` to a file we have just decided we may not understand.
+- A node that fails the probe is **skipped**, not raised. The union is served from the nodes
+  that work.
+- The skip is reported, naming the node and the reason: in the `warnings` list of any reader
+  that returns an envelope (`upcoming_dates`), in the `healthy` / `warning` fields of
+  `list_nodes`, and on the `boonyard` logger for every reader that returns a bare list.
+- An **unknown node name** in `scope` still raises `ValueError`. A typo is a caller error; an
+  unreadable node is an environment failure. Only the second one degrades.
+
+This is the soft-validation posture of ADR-0002 and ADR-0009 applied to the read path: the
+substrate captures and advises, it does not gatekeep. It also protects the instrument built on
+top of it — a daily reader over `scope='all'` that raises on one bad node loses its whole
+section and says nothing about why, which is a silent failure at exactly the moment the
+boonscape needs watching (the `visit_watch` shape: 127 runs, zero rows, twenty days unnoticed,
+jrhood #174).
+
+**Not decided here** (deliberately, and still open): boonyard #76 Finding 1, hyphenated
+registry keys vs the aggregator's `_IDENT` guard. Worked around in config; a design-seat call.
+
 ## References
 
 - CHARTER.md — "Load-bearing beliefs / One node = one SQLite file"

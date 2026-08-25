@@ -65,6 +65,30 @@ def _emit_warnings(warns: list[str]) -> None:
         print(f"warning: {warning}", file=sys.stderr)
 
 
+def _fmt_date_row(row: dict) -> str:
+    """One line of the kill-date table. Overdue rows carry a leading ``!``."""
+    flag = "!" if row["overdue"] else " "
+    days = f"{row['days_out']:+d}d"
+    node = row["node"] or "-"
+    entry = f"#{row['entry_id']}"
+    return f"{flag} {row['date']}  {days:>6}  {node:<12} {entry:<7} {row['headline'][:72]}"
+
+
+def _print_dates(result: dict) -> None:
+    """The kill-date register as a plain table; warnings go to stderr."""
+    print(
+        f"== {result['prefix']} register — today {result['today']}, "
+        f"window +{result['within_days']}d (overdue always shown) =="
+    )
+    if not result["dates"]:
+        print("(no dates)")
+    for row in result["dates"]:
+        print(_fmt_date_row(row))
+    _emit_warnings(
+        [f"[{w['kind']}] {w.get('node') or '-'} — {w['detail']}" for w in result["warnings"]]
+    )
+
+
 # --------------------------------------------------------------------------
 # Command handlers
 # --------------------------------------------------------------------------
@@ -276,8 +300,7 @@ def cmd_mcp(args) -> int:
     if args.config:
         nodes = _load_umbrella_nodes(Path(args.config))
         print(
-            f"serving aggregator ({len(nodes)} nodes, read-only, {auth}) "
-            f"on {args.host}:{args.port}"
+            f"serving aggregator ({len(nodes)} nodes, read-only, {auth}) on {args.host}:{args.port}"
         )
         serve(aggregator=aggregator(nodes=nodes), host=args.host, port=args.port, api_key=key)
     else:
@@ -357,6 +380,8 @@ def cmd_umbrella(args) -> int:
         _print_entries(agg.recent(args.n, scope=scope))
     elif args.umbrella_cmd == "find":
         _print_entries(agg.search_text(args.query, args.n, scope=scope))
+    elif args.umbrella_cmd == "dates":
+        _print_dates(agg.upcoming_dates(args.within, prefix=args.prefix, scope=scope))
     elif args.umbrella_cmd == "tags":
         result = agg.list_tags(tree=args.tree, scope=scope)
         if args.tree:
@@ -504,6 +529,10 @@ def build_parser() -> argparse.ArgumentParser:
     ut = um.add_parser("tags")
     ut.add_argument("--tree", action="store_true")
     ut.add_argument("--scope")
+    ud = um.add_parser("dates", help="the kill-date register (overdue first)")
+    ud.add_argument("--within", type=int, default=45, help="forward window in days (default 45)")
+    ud.add_argument("--prefix", default="killdate", help="tag namespace to scan")
+    ud.add_argument("--scope")
     p.set_defaults(func=cmd_umbrella)
 
     return parser

@@ -196,13 +196,62 @@ latest_skill(
 
 The newest revision of the named skill, or null if no skill with that slug exists. Convenience for "what does this skill say *now*."
 
+### `upcoming_dates`
+
+*Added 2026-08-24 (package minor addition). Authority: umbrella #202 Ruling 4, routed as
+`Umbrella/CODE_ORDER_BOONYARD_15B.md` §1, logged at umbrella #209; rides on the ADR-0003
+clarification of the same date.*
+
+```
+upcoming_dates(
+    within_days: int = 45,
+    prefix: str = "killdate",
+    today: str | None = None,        # YYYY-MM-DD; default = the SERVER'S LOCAL date
+    scope: str | None | list[str] = None,
+) -> {
+    today: str, within_days: int, prefix: str,
+    dates: list[{date, days_out, overdue, entry_id, node, agent, prefix, headline, tags}],
+    warnings: list[{kind, node, entry_id?, tag?, detail}],
+}
+```
+
+The kill-date register. A kill-date is **declared, never inferred**: it is an entry tagged
+`<prefix>:YYYY-MM-DD` (`killdate:2026-09-23`). This tool reads the tag. Nothing in the
+substrate guesses at dates written in prose — a compiler that infers which dates in a wall of
+entries are commitments is a guessing machine with false positives, and a kill-date you did
+not declare was never a control in the first place.
+
+Semantics:
+- Sorted soonest-first, so **overdue dates sit at the top**.
+- `within_days` bounds only the **future** side. A date in the past is returned with
+  `overdue: true` and a negative `days_out`, and keeps being returned until a human retires
+  it. A forward-only window reproduces the failure this tool exists to prevent (a date passed;
+  nothing read it back; the silence looked like health).
+- `days_out` is measured against the **local wall-clock date** of the machine serving the tool,
+  not UTC. A cloud seat calling at 03:00 UTC is calling at 23:00 the previous day in ET, and a
+  naive UTC `today` shifts every number by one.
+- A malformed date tag (`killdate:soon`, `killdate:2026-13-40`) is skipped and reported in
+  `warnings`. It is never an error — soft validation, ADR-0002/0009.
+- Skipped nodes (ADR-0003 clarification) arrive in the same `warnings` list, so a seat reading
+  over `scope='all'` sees which node went dark instead of silently losing its rows.
+- Returns an envelope rather than a bare list precisely because the warnings channel is
+  load-bearing: this is a control, and a control that can fail quietly is not one.
+
+Available in both single-node and aggregator deployments. In single-node mode `node` is the
+node's own name from `meta`; in aggregator mode it is the registry slug.
+
 ### `list_nodes`
 
 ```
-list_nodes() -> list[{name, slug, created_at, entry_count, last_write_at}]
+list_nodes() -> list[{name, slug, created_at, entry_count, last_write_at, healthy, warning}]
 ```
 
 In aggregator deployments, returns the nodes the caller has access to. In single-node deployments, returns the one node. Used by the dashboard and by seats wanting to know what scope values are valid.
+
+*Amended 2026-08-24:* aggregator rows also carry `healthy: bool` and `warning: str | None`
+(ADR-0003 clarification). A node that cannot be read is listed as unhealthy with the reason,
+rather than raising and taking the whole listing with it; its metadata fields are `null`. This
+is the health surface a cloud seat reads when the register looks short.
 
 ## Operational tools (admin-y; exposed in OSS, gated in SaaS)
 
@@ -246,6 +295,7 @@ The substrate's self-audit. Exposed in OSS; in SaaS, throttled (it's a full-tabl
 
 - **Stable forever:** `log_entry`, `recent`, `by_id`, `search_by_tag`, `search_text`, `get_thread`, `list_tags`. These are the v1 contract. Their names and required parameters do not change.
 - **Stable since v3:** `search_by_tag_exact`, `log_skill_revision`, `list_skills`, `latest_skill`, `list_agents`, `list_entry_types`, `list_nodes`, `node_info`, `audit_doctor`.
+- **Added 2026-08-24:** `upcoming_dates` (additive; a minor-version bump is owed at the next release cut).
 - **Additions are minor-version bumps; removals are major-version bumps.** A breaking change to any of the above bumps the package's major version, which (per `04_distribution.md`) means a schema migration too.
 
 ## Error model

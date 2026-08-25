@@ -145,6 +145,23 @@ TOOL_DEFS: list[dict] = [
         {"slug": _STR, "scope": _SCOPE},
         ["slug"],
     ),
+    _tool(
+        "upcoming_dates",
+        "Kill-date register: entries tagged <prefix>:YYYY-MM-DD, soonest first. "
+        "Past dates are NOT dropped — they return with overdue=true and a negative "
+        "days_out until a human retires them. Returns "
+        "{today, within_days, prefix, dates[], warnings[]}.",
+        {
+            "within_days": _INT,
+            "prefix": {**_STR, "description": "tag namespace to scan (default 'killdate')"},
+            "today": {
+                **_STR,
+                "description": "pin today as YYYY-MM-DD; default is the server's LOCAL date",
+            },
+            "scope": _SCOPE,
+        },
+        [],
+    ),
     _tool("list_nodes", "Configured nodes + metadata.", {}, []),
     _tool("node_info", "Full node metadata.", {"scope": _STR}, []),
     _tool("audit_doctor", "The substrate self-audit.", {"scope": _STR}, []),
@@ -153,6 +170,16 @@ TOOL_DEFS: list[dict] = [
 _TOOL_NAMES = {t["name"] for t in TOOL_DEFS}
 _TOOL_REQUIRED = {t["name"]: t["inputSchema"]["required"] for t in TOOL_DEFS}
 _WRITE_TOOLS = {"log_entry", "log_skill_revision"}
+
+
+def _dates_args(args: dict) -> dict:
+    """The upcoming_dates kwargs, defaulted the same way in both server modes."""
+    within = args.get("within_days")
+    return {
+        "within_days": 45 if within is None else int(within),
+        "prefix": args.get("prefix") or "killdate",
+        "today": args.get("today"),
+    }
 
 
 def _tags_to_str(tags) -> str | None:
@@ -292,6 +319,8 @@ class MCPServer:
             return query.list_skills(args.get("limit", 50), db_path=db)
         if name == "latest_skill":
             return query.latest_skill(args["slug"], db_path=db)
+        if name == "upcoming_dates":
+            return query.upcoming_dates(db_path=db, **_dates_args(args))
         if name == "node_info":
             return query.node_info(db_path=db, profile=self._profile)
         if name == "audit_doctor":
@@ -334,6 +363,8 @@ class MCPServer:
             return agg.list_agents(scope=scope)
         if name == "list_entry_types":
             return agg.list_entry_types(scope=scope)
+        if name == "upcoming_dates":
+            return agg.upcoming_dates(scope=scope, **_dates_args(args))
         if name == "list_nodes":
             return agg.list_nodes()
         raise MCPError("validation", f"tool {name!r} is not available on the aggregator endpoint")

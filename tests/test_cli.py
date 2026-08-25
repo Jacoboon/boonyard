@@ -2,8 +2,10 @@
 
 import contextlib
 import io
+import sqlite3
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from boonyard.cli import build_parser, main
@@ -296,6 +298,72 @@ class ModuleEntryPointTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("boonyard", result.stdout)
+
+
+class UmbrellaDatesTests(unittest.TestCase):
+    """``boonyard umbrella dates`` — the human-at-a-terminal view of the register.
+
+    Dates are relative to the real wall clock (the CLI has no --today pin), so the
+    fixtures are built as offsets from today and the assertions never drift.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.cfg = str(d / "umbrella.toml")
+        self.node = str(d / "n" / "journal.db")
+        run(["--db", self.node, "init", "--name", "solo"])
+        self.overdue = (date.today() - timedelta(days=3)).isoformat()
+        self.soon = (date.today() + timedelta(days=5)).isoformat()
+        self.far = (date.today() + timedelta(days=400)).isoformat()
+        for content, tag in [
+            ("a date that already passed", f"killdate:{self.overdue}"),
+            ("a date coming up", f"killdate:{self.soon}"),
+            ("a date far out", f"killdate:{self.far}"),
+            ("a date nobody wrote properly", "killdate:sometime"),
+        ]:
+            run(["--db", self.node, "log", "conductor", "note", content, "--tags", tag])
+        run(["umbrella", "--config", self.cfg, "add", "solo", self.node])
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_dates_table_shows_overdue_flagged_and_future_in_window(self):
+        code, out, err = run(["umbrella", "--config", self.cfg, "dates"])
+        self.assertEqual(code, 0)
+        self.assertIn(self.overdue, out)
+        self.assertIn(self.soon, out)
+        self.assertNotIn(self.far, out)  # outside the default 45-day window
+        overdue_line = next(ln for ln in out.splitlines() if self.overdue in ln)
+        self.assertTrue(overdue_line.startswith("!"), overdue_line)
+        self.assertIn("-3d", overdue_line)
+        self.assertIn("malformed_date_tag", err)
+
+    def test_within_widens_the_window(self):
+        _, out, _ = run(["umbrella", "--config", self.cfg, "dates", "--within", "500"])
+        self.assertIn(self.far, out)
+
+    def test_prefix_selects_another_namespace(self):
+        _, out, _ = run(["umbrella", "--config", self.cfg, "dates", "--prefix", "reviewdate"])
+        self.assertIn("(no dates)", out)
+
+    def test_scope_narrowing(self):
+        _, out, _ = run(["umbrella", "--config", self.cfg, "dates", "--scope", "solo"])
+        self.assertIn(self.soon, out)
+
+    def test_a_broken_node_warns_and_still_prints_the_register(self):
+        v2 = Path(self._tmp.name) / "v2" / "journal.db"
+        v2.parent.mkdir(parents=True)
+        conn = sqlite3.connect(v2)
+        conn.execute("CREATE TABLE journal (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        run(["umbrella", "--config", self.cfg, "add", "v2_wall", str(v2)])
+        code, out, err = run(["umbrella", "--config", self.cfg, "dates"])
+        self.assertEqual(code, 0)
+        self.assertIn(self.soon, out)
+        self.assertIn("node_skipped", err)
+        self.assertIn("v2_wall", err)
 
 
 if __name__ == "__main__":

@@ -258,6 +258,14 @@ A user can absolutely run all three modes at once:
 
 All four are different deployments of the same substrate. The aggregator can read from all of them in one query.
 
+## A node that cannot be read (added 2026-08-24)
+
+Registries drift: a node rolls to a new schema late, a path moves, a file is half-written. The
+aggregator probes each node in scope first and **skips** the ones that cannot serve a v3 read,
+serving the union from the rest and reporting the skip (see the ADR-0003 clarification dated
+2026-08-24 for the full rule and the failure that produced it). An unknown node *name* in
+`scope` still raises: that is a caller error, not an environment failure.
+
 ## What scope does NOT do
 
 - It does not enable cross-node *writes*. A write is always one node.

@@ -1,15 +1,19 @@
 """M7 tests — the MCP server: tool surface, JSON-RPC dispatch, HTTP, read-only."""
 
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
 import urllib.request
 from pathlib import Path
 
-from boonyard import init_db, log_entry
+from boonyard import init_db, log_entry, upcoming_dates
 from boonyard.aggregator import Aggregator
 from boonyard.mcp import MCPServer, make_httpd
+
+# Pinned so the tool and the Python call are compared against the same day.
+PINNED = "2026-08-24"
 
 
 def _rpc(method, params=None, rid=1):
@@ -57,6 +61,7 @@ class ToolSurfaceTests(unittest.TestCase):
             "list_entry_types",
             "list_skills",
             "latest_skill",
+            "upcoming_dates",
             "list_nodes",
             "node_info",
             "audit_doctor",
@@ -192,6 +197,7 @@ class ToolCallTests(unittest.TestCase):
             ("list_entry_types", {}),
             ("list_skills", {}),
             ("latest_skill", {"slug": "fuse-boot"}),
+            ("upcoming_dates", {}),
         ]:
             payload, err = _call(self.server, name, args)
             self.assertIsNone(err, f"{name} errored: {err}")
@@ -246,6 +252,7 @@ class AggregatorModeTests(unittest.TestCase):
             ("list_agents", {}),
             ("list_entry_types", {}),
             ("list_nodes", {}),
+            ("upcoming_dates", {}),
         ]:
             payload, err = _call(self.server, name, args)
             self.assertIsNone(err, f"{name} errored: {err}")
@@ -447,6 +454,128 @@ class HttpTransportTests(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 400)
         finally:
             httpd.shutdown()
+
+
+class UpcomingDatesToolTests(unittest.TestCase):
+    """The MCP tool IS the deliverable: the morning wave is a cloud session with
+    no filesystem, so a CLI-only tripwire would be a control with no reader."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.db = str(d / "umbrella" / "journal.db")
+        init_db(self.db, node_name="umbrella")
+        log_entry(
+            "conductor", "note", "R1 falsification", tags="killdate:2026-09-23", db_path=self.db
+        )
+        log_entry(
+            "conductor", "note", "the unread gate", tags="killdate:2026-08-20", db_path=self.db
+        )
+        log_entry("conductor", "note", "vague", tags="killdate:soon", db_path=self.db)
+        self.server = MCPServer(db_path=self.db)
+
+        self.other = str(d / "jrhood" / "journal.db")
+        init_db(self.other, node_name="jrhood")
+        log_entry("code", "note", "R2 clock", tags="killdate:2026-09-11", db_path=self.other)
+        self.v2 = d / "v2" / "journal.db"
+        self.v2.parent.mkdir(parents=True)
+        conn = sqlite3.connect(self.v2)
+        conn.execute("CREATE TABLE journal (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        self.agg_server = MCPServer(
+            aggregator=Aggregator(
+                {"umbrella": self.db, "jrhood": self.other, "v2_wall": str(self.v2)}
+            )
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_tool_is_advertised_with_its_parameters(self):
+        resp = self.server.handle(_rpc("tools/list"))
+        tool = next(t for t in resp["result"]["tools"] if t["name"] == "upcoming_dates")
+        self.assertEqual(
+            set(tool["inputSchema"]["properties"]), {"within_days", "prefix", "today", "scope"}
+        )
+        self.assertEqual(tool["inputSchema"]["required"], [])
+        self.assertIn("overdue", tool["description"])
+
+    def test_tool_payload_matches_the_python_call(self):
+        payload, err = _call(self.server, "upcoming_dates", {"within_days": 45, "today": PINNED})
+        self.assertIsNone(err)
+        expected = upcoming_dates(45, today=PINNED, db_path=self.db)
+        # Round-trip the Python result through JSON: the tool's payload is JSON.
+        self.assertEqual(payload, json.loads(json.dumps(expected)))
+
+    def test_overdue_survives_the_wire(self):
+        payload, _ = _call(self.server, "upcoming_dates", {"today": PINNED})
+        self.assertEqual(payload["dates"][0]["date"], "2026-08-20")
+        self.assertTrue(payload["dates"][0]["overdue"])
+        self.assertEqual(payload["dates"][0]["days_out"], -4)
+
+    def test_malformed_tag_arrives_as_a_warning_not_an_error(self):
+        payload, err = _call(self.server, "upcoming_dates", {"today": PINNED})
+        self.assertIsNone(err)
+        self.assertEqual(payload["warnings"][0]["kind"], "malformed_date_tag")
+
+    def test_defaults_apply_when_no_arguments_are_given(self):
+        payload, err = _call(self.server, "upcoming_dates", {})
+        self.assertIsNone(err)
+        self.assertEqual(payload["within_days"], 45)
+        self.assertEqual(payload["prefix"], "killdate")
+
+    def test_bad_today_is_a_validation_error_not_a_crash(self):
+        _, err = _call(self.server, "upcoming_dates", {"today": "tomorrow"})
+        self.assertEqual(err["data"]["error"], "validation")
+
+    def test_scope_all_over_the_aggregator_with_a_broken_node(self):
+        """§ACCEPTANCE 1 + 3 in one call: the register merges across nodes, and the
+        dead node comes back as a warning instead of taking the answer down."""
+        payload, err = _call(self.agg_server, "upcoming_dates", {"scope": "all", "today": PINNED})
+        self.assertIsNone(err)
+        self.assertEqual(
+            [(r["date"], r["node"]) for r in payload["dates"]],
+            [
+                ("2026-08-20", "umbrella"),
+                ("2026-09-11", "jrhood"),
+                ("2026-09-23", "umbrella"),
+            ],
+        )
+        skipped = [w for w in payload["warnings"] if w["kind"] == "node_skipped"]
+        self.assertEqual(skipped[0]["node"], "v2_wall")
+
+    def test_aggregator_scope_narrowing_through_the_tool(self):
+        payload, _ = _call(
+            self.agg_server, "upcoming_dates", {"scope": ["jrhood"], "today": PINNED}
+        )
+        self.assertEqual([r["node"] for r in payload["dates"]], ["jrhood"])
+
+    def test_register_is_readable_over_real_http(self):
+        """The connector shape end to end: JSON-RPC over a socket, no filesystem."""
+        httpd = make_httpd(self.agg_server, port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        port = httpd.server_address[1]
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/",
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {
+                        "name": "upcoming_dates",
+                        "arguments": {"scope": "all", "today": PINNED},
+                    },
+                )
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            body = json.loads(resp.read())
+        payload = json.loads(body["result"]["content"][0]["text"])
+        self.assertEqual(len(payload["dates"]), 3)
+        self.assertTrue(payload["dates"][0]["overdue"])
 
 
 if __name__ == "__main__":

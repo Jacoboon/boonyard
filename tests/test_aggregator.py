@@ -3,10 +3,28 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from boonyard import aggregator, init_db, log_entry
 from boonyard.aggregator import Aggregator
+
+# Pinned so days_out never drifts with the wall clock.
+PINNED = date(2026, 8, 24)
+
+
+def _make_v2_node(path: Path) -> None:
+    """A pre-v3 node: table ``journal``, no ``entry``. The vectorscape-wall shape.
+
+    This is the exact file that took down reads across all six registered nodes
+    (boonyard #76 Finding 2, "no such table: vectorscape_wall.entry").
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE journal (id INTEGER PRIMARY KEY, content TEXT)")
+    conn.execute("INSERT INTO journal (content) VALUES ('a v2 wall entry')")
+    conn.commit()
+    conn.close()
 
 
 class AggregatorTestCase(unittest.TestCase):
@@ -147,6 +165,183 @@ class ConfigAndValidationTests(unittest.TestCase):
         agg = Aggregator({})
         self.assertEqual(agg.recent(), [])
         self.assertEqual(agg.list_tags(), [])
+
+
+# --------------------------------------------------------------------------
+# A broken node degrades the union; it never kills it (ADR-0003 clarification)
+# --------------------------------------------------------------------------
+class DegradedUnionTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.good = d / "good" / "journal.db"
+        init_db(self.good, node_name="good")
+        log_entry("code", "note", "healthy entry", tags="shared", db_path=self.good)
+        self.v2 = d / "v2" / "journal.db"
+        _make_v2_node(self.v2)
+        self.missing = d / "gone" / "journal.db"
+        self.junk = d / "junk" / "journal.db"
+        self.junk.parent.mkdir(parents=True)
+        self.junk.write_bytes(b"this is not a database, it is a text file")
+        self.agg = Aggregator(
+            {
+                "good": str(self.good),
+                "v2_wall": str(self.v2),
+                "gone": str(self.missing),
+                "junk": str(self.junk),
+            }
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_probe_names_each_failure_mode(self):
+        self.assertIsNone(self.agg._probe("good"))
+        self.assertIn("entry", self.agg._probe("v2_wall"))
+        self.assertIn("not found", self.agg._probe("gone"))
+        self.assertIn("unreadable", self.agg._probe("junk"))
+
+    def test_probe_does_not_create_a_missing_node_file(self):
+        self.agg._probe("gone")
+        self.assertFalse(self.missing.exists(), "probing must never mint a node file")
+
+    def test_recent_serves_healthy_nodes_instead_of_raising(self):
+        """boonyard #76 Finding 2: this call used to raise for EVERY node."""
+        rows = self.agg.recent()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], "good")
+
+    def test_every_reader_survives_a_broken_node(self):
+        self.assertIsNotNone(self.agg.by_id(1))
+        self.assertEqual(len(self.agg.get_thread(1)), 1)
+        self.assertEqual(len(self.agg.search_by_tag("shared")), 1)
+        self.assertEqual(len(self.agg.search_by_tag_exact("shared")), 1)
+        self.assertEqual(len(self.agg.search_text("healthy")), 1)
+        self.assertIn("shared", {t["tag"] for t in self.agg.list_tags()})
+        self.assertEqual(self.agg.list_agents(), [{"agent": "code", "count": 1}])
+        self.assertEqual(len(self.agg.list_entry_types()), 1)
+
+    def test_list_nodes_reports_health_instead_of_crashing(self):
+        nodes = {n["slug"]: n for n in self.agg.list_nodes()}
+        self.assertTrue(nodes["good"]["healthy"])
+        self.assertIsNone(nodes["good"]["warning"])
+        for slug in ("v2_wall", "gone", "junk"):
+            self.assertFalse(nodes[slug]["healthy"])
+            self.assertTrue(nodes[slug]["warning"])
+
+    def test_a_typo_in_scope_still_raises(self):
+        """A broken node is an environment failure; an unknown NAME is a caller bug."""
+        with self.assertRaises(ValueError):
+            self.agg.recent(scope=["nonexistent"])
+
+    def test_all_nodes_broken_returns_empty_not_an_exception(self):
+        blind = Aggregator({"v2_wall": str(self.v2), "gone": str(self.missing)})
+        self.assertEqual(blind.recent(), [])
+        result = blind.upcoming_dates(45, today=PINNED)
+        self.assertEqual(result["dates"], [])
+        self.assertEqual(len(result["warnings"]), 2)
+
+
+class UpcomingDatesAcrossNodesTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.paths = {}
+        for name in ("umbrella", "jrhood", "mindstorm"):
+            path = d / name / "journal.db"
+            init_db(path, node_name=name)
+            self.paths[name] = str(path)
+        log_entry(
+            "conductor",
+            "note",
+            "R1 60-day falsification",
+            tags="kill-date,killdate:2026-09-23",
+            db_path=self.paths["umbrella"],
+        )
+        log_entry(
+            "conductor",
+            "note",
+            "Searchlight hard stop",
+            tags="killdate:2026-09-01",
+            db_path=self.paths["umbrella"],
+        )
+        log_entry(
+            "code",
+            "note",
+            "the gate that passed unread",
+            tags="killdate:2026-08-20",
+            db_path=self.paths["jrhood"],
+        )
+        log_entry(
+            "code",
+            "note",
+            "someday",
+            tags="killdate:whenever",
+            db_path=self.paths["mindstorm"],
+        )
+        self.v2 = d / "v2" / "journal.db"
+        _make_v2_node(self.v2)
+        self.agg = Aggregator(dict(self.paths))
+        self.with_broken = Aggregator({**self.paths, "v2_wall": str(self.v2)})
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_scope_all_merges_and_sorts_across_three_nodes(self):
+        result = self.agg.upcoming_dates(45, today=PINNED, scope="all")
+        self.assertEqual(
+            [(r["date"], r["node"]) for r in result["dates"]],
+            [
+                ("2026-08-20", "jrhood"),
+                ("2026-09-01", "umbrella"),
+                ("2026-09-23", "umbrella"),
+            ],
+        )
+        self.assertTrue(result["dates"][0]["overdue"])
+        self.assertEqual(result["dates"][0]["days_out"], -4)
+        self.assertEqual(result["dates"][2]["days_out"], 30)
+
+    def test_malformed_tag_on_one_node_warns_with_that_node_named(self):
+        result = self.agg.upcoming_dates(45, today=PINNED, scope="all")
+        warning = next(w for w in result["warnings"] if w["kind"] == "malformed_date_tag")
+        self.assertEqual(warning["node"], "mindstorm")
+        self.assertEqual(warning["tag"], "killdate:whenever")
+
+    def test_scope_narrowing(self):
+        result = self.agg.upcoming_dates(45, today=PINNED, scope=["jrhood"])
+        self.assertEqual([r["node"] for r in result["dates"]], ["jrhood"])
+
+    def test_broken_node_yields_healthy_results_plus_a_named_warning(self):
+        """THE #76 FINDING-2 REGRESSION TEST.
+
+        One unreadable node in scope must not take the register down with it:
+        the tripwire would fail silent on the morning it matters most.
+        """
+        result = self.with_broken.upcoming_dates(45, today=PINNED, scope="all")
+        self.assertEqual(len(result["dates"]), 3, "healthy nodes must still be served")
+        skipped = [w for w in result["warnings"] if w["kind"] == "node_skipped"]
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["node"], "v2_wall")
+        self.assertIn("entry", skipped[0]["detail"])
+
+    def test_envelope_carries_the_window_and_the_pinned_today(self):
+        result = self.agg.upcoming_dates(10, today="2026-08-24", scope="all")
+        self.assertEqual(result["today"], "2026-08-24")
+        self.assertEqual(result["within_days"], 10)
+        self.assertEqual(result["prefix"], "killdate")
+        # 09-23 is 30 days out, past a 10-day window; 08-20 is overdue and stays.
+        self.assertEqual([r["date"] for r in result["dates"]], ["2026-08-20", "2026-09-01"])
+
+    def test_custom_prefix_across_scope(self):
+        log_entry(
+            "code",
+            "note",
+            "a review",
+            tags="reviewdate:2026-09-02",
+            db_path=self.paths["jrhood"],
+        )
+        result = self.agg.upcoming_dates(45, prefix="reviewdate", today=PINNED, scope="all")
+        self.assertEqual([r["date"] for r in result["dates"]], ["2026-09-02"])
 
 
 if __name__ == "__main__":

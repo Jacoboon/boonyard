@@ -1,8 +1,12 @@
 """M3 tests — the read path: readers, discovery, skills, node_info, audit_doctor."""
 
+import ast
+import datetime
+import inspect
 import sqlite3
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from boonyard import (
@@ -22,7 +26,14 @@ from boonyard import (
     search_by_tag,
     search_by_tag_exact,
     search_text,
+    upcoming_dates,
 )
+from boonyard import query as query_module
+from boonyard.query import _coerce_today, _extract_dated_tags
+
+# The pinned "today" for every dated test. Never date.today(): a test that drifts
+# with the wall clock is a test that fails at midnight for no reason.
+PINNED = date(2026, 8, 24)
 
 
 def _node() -> sqlite3.Connection:
@@ -267,6 +278,161 @@ class AuditDoctorTests(unittest.TestCase):
         self.assertNotIn("possible_deletion", kinds)
         self.assertNotIn("orphaned_related_id", kinds)
         self.assertEqual(report["unknown_agents"], [])
+
+
+# --------------------------------------------------------------------------
+# upcoming_dates — the kill-date tripwire (umbrella #202 Ruling 4)
+# --------------------------------------------------------------------------
+class DateTagParsingTests(unittest.TestCase):
+    def test_wellformed_tags_parse(self):
+        good, bad = _extract_dated_tags(["killdate:2026-09-23", "other"], "killdate")
+        self.assertEqual(good, [("killdate:2026-09-23", date(2026, 9, 23))])
+        self.assertEqual(bad, [])
+
+    def test_malformed_tags_are_collected_not_raised(self):
+        good, bad = _extract_dated_tags(
+            ["killdate:soon", "killdate:2026-13-40", "killdate:26-09-23"], "killdate"
+        )
+        self.assertEqual(good, [])
+        self.assertEqual(bad, ["killdate:soon", "killdate:2026-13-40", "killdate:26-09-23"])
+
+    def test_other_namespaces_ignored(self):
+        good, bad = _extract_dated_tags(["arc:2026-09-23", "model:x"], "killdate")
+        self.assertEqual((good, bad), ([], []))
+
+    def test_coerce_today_accepts_date_datetime_and_string(self):
+        self.assertEqual(_coerce_today(PINNED), PINNED)
+        self.assertEqual(_coerce_today("2026-08-24"), PINNED)
+        self.assertEqual(_coerce_today(datetime.datetime(2026, 8, 24, 23, 59)), PINNED)
+
+    def test_default_today_is_local_wall_clock_not_utc(self):
+        """umbrella #53 / #200: UTC drift has bitten this stack twice in three days.
+
+        date.today() is localtime. utcnow().date() is not, and at 23:00 ET it is
+        already tomorrow — which silently shifts every days_out by one.
+        """
+        self.assertEqual(_coerce_today(None), date.today())
+        # Guard the mechanism, not just the value: no utcnow()/now() call may
+        # appear anywhere in the read path. (AST, so prose about UTC in the
+        # docstrings doesn't trip it.) A deliberate tz-aware datetime.now(tz)
+        # would have to update this test on purpose, which is the point.
+        called = {
+            node.attr
+            for node in ast.walk(ast.parse(inspect.getsource(query_module)))
+            if isinstance(node, ast.Attribute)
+        }
+        self.assertNotIn("utcnow", called, "query.py must never take today from UTC")
+        self.assertNotIn("now", called, "query.py must never take today from a clock-now call")
+
+
+class UpcomingDatesTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = _node()
+
+    def _log(self, content, tags, agent="conductor"):
+        return log_entry(agent, "note", content, tags=tags, conn=self.conn)
+
+    def test_future_date_returns_correct_days_out(self):
+        entry_id = self._log("R1 60-day falsification", "kill-date,killdate:2026-09-23")
+        result = upcoming_dates(45, today=PINNED, conn=self.conn)
+        self.assertEqual(len(result["dates"]), 1)
+        row = result["dates"][0]
+        self.assertEqual(row["date"], "2026-09-23")
+        self.assertEqual(row["days_out"], 30)
+        self.assertFalse(row["overdue"])
+        self.assertEqual(row["entry_id"], entry_id)
+        self.assertEqual(row["agent"], "conductor")
+        self.assertEqual(row["prefix"], "killdate")
+        self.assertIn("killdate:2026-09-23", row["tags"])
+        self.assertEqual(result["today"], "2026-08-24")
+        self.assertEqual(result["warnings"], [])
+
+    def test_past_date_returns_overdue_not_filtered(self):
+        """THE 2026-08-20 REGRESSION TEST.
+
+        The gate date passed and nothing read it back. A window that only looks
+        forward reproduces that bug exactly: the date drops out of the result and
+        the silence looks like health. A past date must come back, flagged, with a
+        negative days_out, and keep coming back until a human retires it.
+        """
+        self._log("the gate that passed unread", "killdate:2026-08-20")
+        result = upcoming_dates(45, today=PINNED, conn=self.conn)
+        dates = result["dates"]
+        self.assertEqual(len(dates), 1, "a past date must NOT be filtered out")
+        self.assertTrue(dates[0]["overdue"])
+        self.assertEqual(dates[0]["days_out"], -4)
+
+    def test_overdue_sorts_above_future_dates(self):
+        self._log("passed", "killdate:2026-08-20")
+        self._log("ahead", "killdate:2026-09-23")
+        rows = upcoming_dates(45, today=PINNED, conn=self.conn)["dates"]
+        self.assertEqual([r["date"] for r in rows], ["2026-08-20", "2026-09-23"])
+
+    def test_today_is_due_not_overdue(self):
+        self._log("due today", "killdate:2026-08-24")
+        row = upcoming_dates(45, today=PINNED, conn=self.conn)["dates"][0]
+        self.assertEqual(row["days_out"], 0)
+        self.assertFalse(row["overdue"])
+
+    def test_beyond_the_window_is_excluded(self):
+        self._log("far off", "killdate:2026-12-25")
+        self.assertEqual(upcoming_dates(45, today=PINNED, conn=self.conn)["dates"], [])
+        wide = upcoming_dates(200, today=PINNED, conn=self.conn)["dates"]
+        self.assertEqual(len(wide), 1)
+
+    def test_malformed_date_tag_warns_and_does_not_raise(self):
+        entry_id = self._log("someday soon", "killdate:soon")
+        self._log("real one", "killdate:2026-09-01")
+        result = upcoming_dates(45, today=PINNED, conn=self.conn)
+        self.assertEqual([r["date"] for r in result["dates"]], ["2026-09-01"])
+        self.assertEqual(len(result["warnings"]), 1)
+        warning = result["warnings"][0]
+        self.assertEqual(warning["kind"], "malformed_date_tag")
+        self.assertEqual(warning["tag"], "killdate:soon")
+        self.assertEqual(warning["entry_id"], entry_id)
+
+    def test_impossible_calendar_date_warns(self):
+        self._log("month thirteen", "killdate:2026-13-40")
+        result = upcoming_dates(45, today=PINNED, conn=self.conn)
+        self.assertEqual(result["dates"], [])
+        self.assertEqual(result["warnings"][0]["tag"], "killdate:2026-13-40")
+
+    def test_custom_prefix(self):
+        self._log("a review, not a kill", "reviewdate:2026-09-01")
+        self.assertEqual(upcoming_dates(45, today=PINNED, conn=self.conn)["dates"], [])
+        result = upcoming_dates(45, prefix="reviewdate", today=PINNED, conn=self.conn)
+        self.assertEqual(len(result["dates"]), 1)
+        self.assertEqual(result["prefix"], "reviewdate")
+
+    def test_two_dates_on_one_entry_are_two_rows(self):
+        self._log("inner and outer bound", "killdate:2026-09-01,killdate:2026-09-11")
+        rows = upcoming_dates(45, today=PINNED, conn=self.conn)["dates"]
+        self.assertEqual([r["date"] for r in rows], ["2026-09-01", "2026-09-11"])
+
+    def test_headline_is_single_line_and_capped(self):
+        self._log("first line\n\nsecond paragraph " + "x" * 300, "killdate:2026-09-01")
+        row = upcoming_dates(45, today=PINNED, conn=self.conn)["dates"][0]
+        self.assertNotIn("\n", row["headline"])
+        self.assertEqual(len(row["headline"]), 120)
+        self.assertTrue(row["headline"].startswith("first line second paragraph"))
+
+    def test_empty_node_returns_empty_envelope(self):
+        result = upcoming_dates(45, today=PINNED, conn=self.conn)
+        self.assertEqual(result["dates"], [])
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["within_days"], 45)
+
+    def test_node_name_rides_on_each_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "journal.db"
+            init_db(db, node_name="umbrella")
+            log_entry("conductor", "note", "dated", tags="killdate:2026-09-01", db_path=db)
+            row = upcoming_dates(45, today=PINNED, db_path=db)["dates"][0]
+            self.assertEqual(row["node"], "umbrella")
+
+    def test_bad_pinned_today_is_a_value_error(self):
+        with self.assertRaises(ValueError):
+            upcoming_dates(45, today="not-a-date", conn=self.conn)
 
 
 if __name__ == "__main__":
