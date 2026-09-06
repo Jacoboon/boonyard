@@ -9,6 +9,12 @@ bump means a schema rollover, never a marketing decision.
 
 ## [Unreleased]
 
+### Repo, not the package
+- `saas/` — the hosted layer (`boonyardnn`: provisioner + path router, Phase 2 slice 1).
+  A separate, unversioned distribution that *depends on* `boonyard`; it is not part of the
+  package wheel and imports the package through `saas/boonyardnn/adapter.py` only.
+  Nothing under `package/` changed. *(2026-09-06; umbrella #335.)*
+
 ## [3.2.0] — 2026-09-06
 
 Two additive tools landed on `main` between 2026-08-24 and 2026-08-25 while `pyproject.toml`

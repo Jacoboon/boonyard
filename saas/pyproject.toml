@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boonyardnn"
+# Unversioned until it deploys (CODE_ORDER_PHASE2_SLICE1 §3): a dev marker, no tag.
+version = "0.1.0.dev0"
+description = "The hosted layer for boonyard: per-user provisioning and the path router."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Jacob Reed" }]
+# ADR-0006: the SaaS runs the SAME package the OSS user installs. The one runtime
+# dependency is boonyard itself; the layer is otherwise stdlib (design call (a),
+# umbrella #335 — no web framework until there is a dashboard to need one).
+dependencies = ["boonyard>=3.2,<4"]
+
+[project.scripts]
+boonyardnn = "boonyardnn.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["boonyardnn*"]
+
+[tool.ruff]
+extend = "../pyproject.toml"
+src = [".", "tests"]
