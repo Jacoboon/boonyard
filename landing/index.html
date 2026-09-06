@@ -60,27 +60,8 @@
     line-height: 1.7;
   }
   .status .dot { color: var(--accent); }
-  .signup {
-    margin-top: 2.5rem;
-    text-align: center;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1.5rem;
-  }
-  .signup a.button {
-    display: inline-block;
-    font-family: var(--mono);
-    font-size: 0.95rem;
-    color: var(--bg);
-    background: var(--accent);
-    border-radius: 6px;
-    padding: 0.6em 1.4em;
-    text-decoration: none;
-    margin-top: 0.75rem;
-  }
-  .signup a.button:hover { background: #f2c565; }
-  .signup p { color: var(--muted); font-size: 0.9rem; margin: 0; }
+  .status b { color: var(--text); }
+  .status a { color: var(--accent); }
   footer {
     margin-top: 3rem;
     padding-top: 1.5rem;
@@ -113,23 +94,19 @@
   <h2>no lock-in, ever</h2>
   <p>The data is a SQLite file. Download it, open it in any SQLite tool, point your own server at it, copy it to another machine, fork the code, walk away. Exit cost is <code>cp</code> of one file. The eventual hosted service runs the same open-source package you can pip-install — convenience is the product, never the algorithm.</p>
 
+  <h2>two ways to run it</h2>
+  <div class="mode"><b>self-hosted — free, forever</b><br>Run the package on your own machine or server. One SQLite file per node, an MCP endpoint your agents point at, your keys, your disk. If your agents live in the cloud, put your node behind whatever door you already trust (a reverse proxy, a tunnel, a VPN) — the package does not care which.</div>
+  <div class="mode"><b>hosted — coming</b><br>Sign up, spawn a node, get an MCP URL and a key, point a seat at it. Same package, same file format, our disk and our backups instead of yours. Free tier for individual nodes; a paid tier for cross-node aggregation and higher rate limits. Export is the SQLite file, always. Not open yet.</div>
+
   <h2>status</h2>
   <div class="status">
-    <span class="dot">●</span> pre-phase-1 — the substrate is designed; package extraction is next.<br>
-    <span class="dot">●</span> the design canon (charter, 10 ADRs, 9 architecture docs) is complete.<br>
-    <span class="dot">●</span> a live prototype has been running across the author's projects since 2025.<br>
-    <span class="dot">●</span> open source (Apache 2.0) on release.
-  </div>
-
-  <div class="signup">
-    <p>No product to sell you yet. If you want one email when it ships:</p>
-    <!-- TODO: replace mailto with a real single-field capture (Cloudflare Pages form / Buttondown) before public traffic -->
-    <a class="button" href="mailto:hello@boonyard.com?subject=Tell%20me%20when%20BoonyardNN%20is%20ready">tell me when it's ready</a>
+    <span class="dot">●</span> <b>v3.2.0 — open source, Apache 2.0.</b> <code>pip install</code> it, vendor it, or read it: <a href="https://github.com/Jacoboon/boonyard">github.com/Jacoboon/boonyard</a>. Stdlib only, 277 tests, 22 CLI commands, 18 MCP tools.<br>
+    <span class="dot">●</span> <b>Six live nodes since July 2026</b>, written to daily by human and AI seats across the author's projects — the substrate is dogfooded before it is sold.<br>
+    <span class="dot">●</span> <b>Hosted service: not yet.</b> The design canon (charter, 10 ADRs, 9 architecture docs) is complete and public in the repo; the first hosted user will be the author.
   </div>
 
   <footer>
-    <!-- TODO: add GitHub repo URL when the repo goes public; add RSS of dispatch entries eventually -->
-    github (link coming with the phase-1 release) · <a href="mailto:hello@boonyard.com">contact</a><br>
+    <a href="https://github.com/Jacoboon/boonyard">github.com/Jacoboon/boonyard</a> · contact: <a href="mailto:hello@boonyard.com">hello@boonyard.com</a><br>
     boonyardnn — built in the open, dogfooded first.
   </footer>
 </main>
