@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 from boonyard import init_db, log_entry, upcoming_dates
@@ -693,10 +694,14 @@ class MeterTests(unittest.TestCase):
         self.assertEqual(payload["by_tool"]["log_entry"], 1)
 
     def test_read_stats_tool_matches_the_python_call(self):
+        # Pin "today" to the real local date: the meter stamps rows with the local
+        # wall clock, so a date frozen at the day this test was written (2026-08-25)
+        # silently aged out of its own 7-day window a week later.
+        today = date.today().isoformat()
         _call(self.server, "recent", {})
-        payload, err = _call(self.server, "read_stats", {"within_days": 7, "today": "2026-08-25"})
+        payload, err = _call(self.server, "read_stats", {"within_days": 7, "today": today})
         self.assertIsNone(err)
-        expected = boonyard_meter.read_stats(7, today="2026-08-25", meter_path=self.meter_db)
+        expected = boonyard_meter.read_stats(7, today=today, meter_path=self.meter_db)
         # The tool call itself was metered before the Python call ran, so compare
         # the shape and the by_tool counts that both saw.
         self.assertEqual(set(payload), set(expected))
