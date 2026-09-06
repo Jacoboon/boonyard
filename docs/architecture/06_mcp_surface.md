@@ -349,8 +349,8 @@ The substrate's self-audit. Exposed in OSS; in SaaS, throttled (it's a full-tabl
 
 - **Stable forever:** `log_entry`, `recent`, `by_id`, `search_by_tag`, `search_text`, `get_thread`, `list_tags`. These are the v1 contract. Their names and required parameters do not change.
 - **Stable since v3:** `search_by_tag_exact`, `log_skill_revision`, `list_skills`, `latest_skill`, `list_agents`, `list_entry_types`, `list_nodes`, `node_info`, `audit_doctor`.
-- **Added 2026-08-24:** `upcoming_dates` (additive; a minor-version bump is owed at the next release cut).
-- **Added 2026-08-25:** `read_stats` (additive; same pending minor bump).
+- **Added 2026-08-24:** `upcoming_dates` (additive; a minor-version bump is owed at the next release cut). *Discharged: shipped as v3.2.0, 2026-09-06.*
+- **Added 2026-08-25:** `read_stats` (additive; same pending minor bump). *Discharged: v3.2.0, 2026-09-06.*
 - **Additions are minor-version bumps; removals are major-version bumps.** A breaking change to any of the above bumps the package's major version, which (per `04_distribution.md`) means a schema migration too.
 
 ## Error model
