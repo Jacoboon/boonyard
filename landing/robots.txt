@@ -1,0 +1,12 @@
+# boonyard.com — robots.txt
+# Served by nginx from the editable checkout on the droplet (landing/ is the site root).
+# Policy: the landing page is public documentation of an open-source project and is
+# meant to be read by people and by the tools they use — including AI crawlers.
+# If that ever changes, change it HERE (a commit), not in a Cloudflare dashboard
+# setting; the repo is the artifact. (Cloudflare's managed robots.txt, which blocked
+# ClaudeBot/GPTBot/CCBot by default, was switched off 2026-09-06.)
+
+User-agent: *
+Allow: /
+
+Sitemap: https://boonyard.com/sitemap.xml
