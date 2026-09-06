@@ -1,0 +1,20 @@
+# Line endings — added at the v3.2.0 cut (umbrella #252; hazard named at #277/#279).
+#
+# This repo is PUBLIC and was committed from a machine with core.autocrlf=true and
+# no .gitattributes. Every tracked file is LF in the index today (measured, 66/66),
+# but nothing enforced it: a fresh Windows clone would materialise CRLF, and one
+# commit from that clone could flip the whole tree. `text=auto` makes git normalise
+# to LF in the index on commit regardless of the contributor's platform, so the
+# index can no longer flip.
+* text=auto
+
+# Anything a POSIX shell executes is pinned to LF on checkout everywhere: a script
+# whose lines end in \r fails on the far end with `$'\r': command not found`
+# after the transfer succeeded (the droplet runs Ubuntu; umbrella #315 CRLF-keys).
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Never touch bytes in these.
+*.db  binary
+*.zip binary
+*.png binary
