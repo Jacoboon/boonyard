@@ -1,10 +1,12 @@
 # Phase 3 — Public Open + Billing + Teams
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 > The SaaS opens to the public. Stripe handles billing. Teams arrive. BoonyardNN goes from "Jacob's substrate" to "a product anyone can use."
 
 ## Goal
 
-Open `boonyardnn.com` to public signups. Wire up Stripe billing for the Pro tier. Add Team functionality for shared nodes. Continue dogfooding (user zero is still the primary user; the substrate's value to Jacob is still the lead metric), but now with other users as an additional reality check.
+Open `boonyard.com` to public signups. Wire up Stripe billing for the Pro tier. Add Team functionality for shared nodes. Continue dogfooding (user zero is still the primary user; the substrate's value to Jacob is still the lead metric), but now with other users as an additional reality check.
 
 ## Gating condition
 
@@ -51,7 +53,7 @@ Signup flow improvements over Phase 2:
 
 ### 5. Documentation public + polished
 
-The Phase 2 drafted docs go live at `boonyardnn.com/docs/`:
+The Phase 2 drafted docs go live at `boonyard.com/docs/`:
 
 - Getting started (free signup → first node → first MCP call) — under 5 minutes from zero.
 - Conceptual docs (one page each for: the substrate, the three modes, schema profiles, tag namespaces, skills).
@@ -76,9 +78,9 @@ The landing page from Phase 0 is iterated:
 
 ### 7. Support infrastructure
 
-- Help email: `support@boonyardnn.com`.
+- Help email: `support@boonyard.com`.
 - Knowledge base: docs + a FAQ + common-issue articles.
-- Status page: `status.boonyardnn.com` shows real-time uptime (custom or a third-party like UptimeRobot).
+- Status page: `status.boonyard.com` shows real-time uptime (custom or a third-party like UptimeRobot).
 - Operations runbook: documented in `boonyardnn-private/runbooks/` (private repo for ops); covers common incidents (storage full, backup failure, MCP server crash, abuse-pattern detection).
 
 ### 8. Webhooks (Phase 3.5 if scope-trims)
@@ -91,7 +93,7 @@ Optional for Phase 3; if scope balloons, defer to Phase 3.5.
 
 The Umbrella vision (live NN entry 75) — a meta-cognitive layer reading across Jacob's project NNs to surface cross-project patterns — is **not** a BoonyardNN feature. It is a separate project that uses BoonyardNN's aggregator endpoint as its data source.
 
-In Phase 3, Jacob's Umbrella project (built in `C:\Users\Jacob\Code\Umbrella\`) consumes `mcp.boonyardnn.com/jacoboon/_aggregate/sse` and produces its own outputs (weekly digest, cross-project anomaly detection, etc.). This is itself dogfood evidence: the Phase 3 SaaS supports a third-party consumer pattern that other users might also build atop.
+In Phase 3, Jacob's Umbrella project (built in `C:\Users\Jacob\Code\Umbrella\`) consumes `mcp.boonyard.com/jacoboon/_aggregate/sse` and produces its own outputs (weekly digest, cross-project anomaly detection, etc.). This is itself dogfood evidence: the Phase 3 SaaS supports a third-party consumer pattern that other users might also build atop.
 
 ### 10. Phase 3 marker entry
 
@@ -99,7 +101,7 @@ In Phase 3, Jacob's Umbrella project (built in `C:\Users\Jacob\Code\Umbrella\`) 
 agent: jacob
 entry_type: implementation
 tags: implementation,boonyard,phase-3,milestone,public-launch,billing
-content: BoonyardNN Phase 3 complete. boonyardnn.com open to public signups. Stripe billing live. Teams supported. <N> users signed up; <M> on Pro. Dogfood evidence: user zero (Jacob) is still using the substrate heavily across <list of projects>; Umbrella consumes the aggregator endpoint successfully. No data-loss incidents. Substrate has earned its keep across the dogfood pact period. Considering Phase 4 (community features, marketplace, etc.) — not committed.
+content: BoonyardNN Phase 3 complete. boonyard.com open to public signups. Stripe billing live. Teams supported. <N> users signed up; <M> on Pro. Dogfood evidence: user zero (Jacob) is still using the substrate heavily across <list of projects>; Umbrella consumes the aggregator endpoint successfully. No data-loss incidents. Substrate has earned its keep across the dogfood pact period. Considering Phase 4 (community features, marketplace, etc.) — not committed.
 ```
 
 ## Acceptance criteria

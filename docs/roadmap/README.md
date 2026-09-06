@@ -1,5 +1,7 @@
 # Roadmap
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 The phasing of the build. Each phase has a clear goal, a list of deliverables, acceptance criteria, and an explicit non-goal list.
 
 ## Phases
@@ -8,7 +10,7 @@ The phasing of the build. Each phase has a clear goal, a list of deliverables, a
 |---|---|---|---|
 | [0](PHASE_0.md) | Canon, conventions, landing | Lock the design canon; register the domain; splice the v1.2 conventions into existing projects | in progress (this repo *is* most of it) |
 | [1](PHASE_1.md) | Package extraction + dogfood | Lift the substrate into the standalone boonyard package; migrate PlaneScape and JRHood onto it | pending Phase 0 |
-| [2](PHASE_2.md) | SaaS MVP for user zero | boonyardnn.com goes live for Jacob only; validate the SaaS deployment shape end-to-end | pending Phase 1 |
+| [2](PHASE_2.md) | SaaS MVP for user zero | boonyard.com goes live for Jacob only; validate the SaaS deployment shape end-to-end | pending Phase 1 |
 | [3](PHASE_3.md) | Public open + billing + teams | Open to public signups; Stripe billing; team-shared nodes; documentation polish; marketing pass | pending Phase 2 |
 
 ## Phase gating

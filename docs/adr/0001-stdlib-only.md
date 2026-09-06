@@ -1,5 +1,7 @@
 # ADR 0001 — Stdlib-only for the boonyard package
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 **Status:** Accepted
 **Date:** 2026-05-20
 **Deciders:** Jacob (Professor), Cowork-Opus
@@ -28,7 +30,7 @@ The boonyard package has **zero runtime dependencies**. The `pyproject.toml`'s `
 
 Test-only and dev-only dependencies (pytest, ruff, mypy if we want it) are fine because they don't run inside user environments — but even those are kept minimal, and the test suite must remain runnable using only `python -m unittest` as a fallback so that "I want to verify boonyard works in my environment" never requires installing anything.
 
-This rule applies to the **package only**. The SaaS layer (the web service that runs boonyardnn.com) is allowed to depend on whatever it needs (Flask/FastAPI, a web framework, cloudflared, etc.). The SaaS is a separate deployment that *uses* the package; the package does not import any SaaS code. See ADR-0006.
+This rule applies to the **package only**. The SaaS layer (the web service that runs boonyard.com) is allowed to depend on whatever it needs (Flask/FastAPI, a web framework, cloudflared, etc.). The SaaS is a separate deployment that *uses* the package; the package does not import any SaaS code. See ADR-0006.
 
 ## Consequences
 
@@ -44,7 +46,7 @@ This rule applies to the **package only**. The SaaS layer (the web service that 
 - No pydantic-style declarative validation. We get the same effect with light hand-written validators in `boonyard.log`.
 - No SQLAlchemy. Queries are raw SQL with parameter binding. The full query surface is also small; this is fine.
 - **Embeddings are not available by default and remain out of scope.** Any reasonable vector-search path (sentence-transformers, sqlite-vec, an embeddings API) requires a runtime dep. If we ever add semantic search, it ships as an optional install (`pip install boonyard[semantic]`) and is never required by the core. See ADR-0010.
-- The MCP server inside the package uses `http.server`, which is acceptable for single-tenant and embedded use but does not scale. The hosted SaaS at boonyardnn.com runs a separate, dependency-using web layer in front of the package. See architecture 06.
+- The MCP server inside the package uses `http.server`, which is acceptable for single-tenant and embedded use but does not scale. The hosted SaaS at boonyard.com runs a separate, dependency-using web layer in front of the package. See architecture 06.
 
 **Neutral:**
 - Python 3.11+ requirement (for `tomllib` and modern type-hint syntax). Acceptable; 3.11 is widely available on every target platform as of 2026.

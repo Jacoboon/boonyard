@@ -10,6 +10,11 @@ bump means a schema rollover, never a marketing decision.
 ## [Unreleased]
 
 ### Repo, not the package
+- **The domain is boonyard.com.** Every `boonyardnn.com` in the canon, the roadmap, the
+  glossary, the README, SECURITY.md, CLAUDE.md/AGENTS.md and the `saas/` tree is replaced by
+  `boonyard.com`; each canon doc carries a dated note; the glossary keeps a `→` redirect. The
+  old name was the gen0, vectorscape-era registration and is retired in full. *(2026-09-06;
+  Professor's decision at boonyard #109.)*
 - `saas/` — the hosted layer (`boonyardnn`: provisioner + path router, Phase 2 slice 1).
   A separate, unversioned distribution that *depends on* `boonyard`; it is not part of the
   package wheel and imports the package through `saas/boonyardnn/adapter.py` only.

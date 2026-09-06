@@ -1,5 +1,7 @@
 # Phase 1 — Package Extraction + Dogfood Across Jacob's Projects
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 > Lift the substrate into a standalone stdlib-only package, migrate the existing live NNs onto it, run them in production for long enough that "the substrate compounds value" is *demonstrated*, not asserted.
 
 > **SCOPE CORRECTION — 2026-07-16, Professor's call (live NN entries 94–95).** BoonyardNN builds and designs; it does not import other NNs' data ("no mixing of the batter bowls"). Consequences for this document as written below:
@@ -142,7 +144,7 @@ Phase 1 is complete when:
 
 ## What Phase 1 does NOT include
 
-- No SaaS deployment at boonyardnn.com (Phase 2).
+- No SaaS deployment at boonyard.com (Phase 2).
 - No multi-tenant code (Phase 2 / Phase 3).
 - No billing (Phase 3).
 - No public sign-ups (Phase 3).
@@ -163,6 +165,6 @@ The hard work is the package authoring (architecture 01-08 specify it; the code 
 
 ## Then what
 
-When Phase 1 is complete and the dogfood evidence is solid: Phase 2 — SaaS MVP for user zero (Jacob signs up on his own boonyardnn.com, the same way other users eventually will, to prove the SaaS deployment shape works).
+When Phase 1 is complete and the dogfood evidence is solid: Phase 2 — SaaS MVP for user zero (Jacob signs up on his own boonyard.com, the same way other users eventually will, to prove the SaaS deployment shape works).
 
 If Phase 1's dogfood evidence is thin or negative: pause, log the issue as a `discussion` entry in the live NN, reassess the canon, consider Phase 1.5 (refinements) before Phase 2.

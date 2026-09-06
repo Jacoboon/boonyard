@@ -1,5 +1,7 @@
 # Phase 0 — Canon, Conventions, Landing
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 > Zero code in the package. The substrate is already designed; this phase produces the artifacts the design needs to exist alongside.
 
 ## Goal
@@ -31,15 +33,15 @@ The deeper reason: extracting code under-designed is worse than extracting code 
 
 ### 2. The domain exists
 
-- [ ] `boonyardnn.com` registered (Porkbun / Cloudflare Registrar).
+- [ ] `boonyard.com` registered (Porkbun / Cloudflare Registrar).
 - [ ] DNS pointing at a placeholder static page (a Cloudflare Pages deployment, or Netlify, or even GitHub Pages).
 - [ ] HTTPS via Cloudflare's free certificate.
 
-If `boonyardnn.com` is taken, fall back to `boonyard.nn`, `boonyard.dev`, `boonyard.org`, or `getboonyard.com` — final pick is a Phase 0 call by Jacob.
+If `boonyard.com` is taken, fall back to `boonyard.nn`, `boonyard.dev`, `boonyard.org`, or `getboonyard.com` — final pick is a Phase 0 call by Jacob. *(What happened: Phase 0 registered `boonyardnn.com`; the product moved to `boonyard.com` in July 2026 and the earlier registration was retired on 2026-09-06 — boonyard #109.)*
 
 ### 3. The landing page exists
 
-A minimal, honest landing page at `boonyardnn.com`. Sections:
+A minimal, honest landing page at `boonyard.com`. Sections:
 
 - **Hero:** "BoonyardNN — append-only shared memory substrate for multi-agent collaboration." Short tagline. One paragraph.
 - **What it is:** the three modes in one paragraph each. Per-project, in-project, over-many.
@@ -70,7 +72,7 @@ Log a `decision` entry in the live NN (nn.vectorscape.uk/sse):
 agent: opus  (or whichever Opus seat actually writes this)
 entry_type: decision
 tags: decision,boonyard,charter-revision,phase-0
-content: BoonyardNN Phase 0 complete. Repo exists at C:\Users\Jacob\Code\BoonyardNN with CHARTER, glossary, 10 ADRs, 9 architecture docs, 4 roadmap docs, CLAUDE.md, README. Domain boonyardnn.com [registered / pending]. Landing page [live at URL / pending]. Phase 1 (package extraction + dogfood) is gated on Jacob's review of the canon.
+content: BoonyardNN Phase 0 complete. Repo exists at C:\Users\Jacob\Code\BoonyardNN with CHARTER, glossary, 10 ADRs, 9 architecture docs, 4 roadmap docs, CLAUDE.md, README. Domain boonyard.com [registered / pending]. Landing page [live at URL / pending]. Phase 1 (package extraction + dogfood) is gated on Jacob's review of the canon.
 ```
 
 This is the entry future seats will find when querying "what's the latest on BoonyardNN" — it points at the repo and signals readiness for Phase 1.
@@ -84,7 +86,7 @@ A handoff document is prepared for the future Claude Code instance (or other imp
 Phase 0 is complete when:
 
 1. The repo at `C:\Users\Jacob\Code\BoonyardNN\` has the full canon as listed above (already satisfied; Phase 0's primary work product).
-2. `boonyardnn.com` (or the chosen domain) resolves to a landing page that accurately reflects the canon.
+2. `boonyard.com` (or the chosen domain) resolves to a landing page that accurately reflects the canon.
 3. ~~The PlaneScape / JRHood (and Spore, if applicable) CLAUDE.md / NN.md splices are landed.~~ *(Deferred 2026-07-16 per live NN entry 89 — retrofit happens at Phase 1 migration.)*
 4. The live NN has a Phase 0 completion marker entry.
 5. Jacob has read the CHARTER and at minimum ADRs 0001, 0002, 0003, 0006 — the load-bearing decisions — and approves proceeding to Phase 1, or has logged objections via `discussion` entries in the live NN.
@@ -103,7 +105,7 @@ Mostly already done (the canon authoring is the bulk of the work). Remaining: ~h
 
 ## Risks
 
-- **Bikeshedding the domain.** If `boonyardnn.com` is taken, the search for an alternate name could absorb hours. Mitigation: pick from the fallback list, defer "perfect name" to Phase 3 marketing pass.
+- **Bikeshedding the domain.** If the chosen domain is taken, the search for an alternate name could absorb hours. Mitigation: pick from the fallback list, defer "perfect name" to Phase 3 marketing pass.
 - **Splice drift.** If the v1.2 §2 conventions land in PlaneScape but not JRHood (or vice versa), the substrate's dogfood story is uneven. Mitigation: log a `decision` entry tracking which projects have been spliced, treat as Phase 0 completion criterion.
 - **"Just one more ADR."** The canon is meant to be load-bearing-stable. Adding a tenth ADR is a Phase 0 fix; adding an eleventh starts to smell like Phase 0 has become its own project. Apply Project-Six guardrail.
 

@@ -1,9 +1,10 @@
-"""The provisioner — user → node → key, by hand, for user zero and the founders.
+"""The provisioner — user → node → key, the operator-run half of the hosted layer.
 
-This is the product for a hand-picked cohort (umbrella #334 ¶4): one command
-makes ADR-0007's directory, one mints ADR-0008's key, one exports the node. No
-signup, no dashboard. The registry owns the files; the adapter owns the
-substrate; this module wires the two and nothing else.
+One command makes ADR-0007's directory, one mints ADR-0008's key, one exports
+the node. This is the layer a signup platform will call (Professor, boonyard
+#109: a real signup and user database, open beyond the first twenty founders);
+until that ships, the operator runs these by hand. The registry owns the files;
+the adapter owns the substrate; this module wires the two and nothing else.
 """
 
 from datetime import UTC, datetime
@@ -127,10 +128,10 @@ def key_urls(public_base: str, user_slug: str, node_slug: str, raw_key: str) -> 
 
     ``header``: ``POST {base}/{user}/{node}`` with ``Authorization: Bearer <key>``.
     ``capability``: ``{base}/{user}/{node}/<key>`` — the key as the trailing path
-    segment, because the claude.ai connector dialog has no header field.
+    segment, for clients whose connector dialog has no header field.
 
     Example:
-        key_urls("https://mcp.boonyardnn.com", "jacoboon", "test-0", "bnyk_…")
+        key_urls("https://mcp.boonyard.com", "jacoboon", "test-0", "bnyk_…")
     """
     header = f"{public_base.rstrip('/')}/{user_slug}/{node_slug}"
     return {"header": header, "capability": f"{header}/{raw_key}"}

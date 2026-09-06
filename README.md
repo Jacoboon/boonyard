@@ -5,8 +5,9 @@
 
 **Status:** Phase 1 shipped. The `boonyard` package works — v3.2.0, zero runtime
 dependencies, 277 tests, 98% coverage — and has been running six live nodes in daily
-production use since 2026-07-18. The hosted service (`boonyardnn.com`) is designed and **not
-built**; see [Status detail](#status-detail).
+production use since 2026-07-18. The hosted service (`boonyard.com`) is in Phase 2: the
+per-user provisioner and the path router went live for user zero on 2026-09-06 at
+`mcp.boonyard.com`; signup is next. See [Status detail](#status-detail).
 
 Read [CHARTER.md](CHARTER.md) for the soul, [docs/adr/](docs/adr/) for the locked decisions,
 [docs/roadmap/](docs/roadmap/) for the build sequence.
@@ -167,14 +168,18 @@ thing this product wants to not be.
 - The full design canon: CHARTER, 10 ADRs, 9 architecture docs, glossary, 4-phase roadmap,
   adoption kit, travel manual.
 
+**Built, in limited operation:**
+
+- The hosted service at `boonyard.com` — Phase 2 slice 1 ([PHASE_2](docs/roadmap/PHASE_2.md)):
+  the per-user provisioner and the path router (`saas/`, realising
+  [ADR-0007](docs/adr/0007-multi-tenant-storage-layout.md) and
+  [ADR-0008](docs/adr/0008-mcp-routing-and-auth.md)) run on the droplet at `mcp.boonyard.com`,
+  serving user zero since 2026-09-06. Signup, dashboard and billing are next
+  ([PHASE_3](docs/roadmap/PHASE_3.md)); there is no public signup yet. The self-hosted path
+  is complete and unchanged.
+
 **Designed, not built:**
 
-- The hosted service at `boonyardnn.com` — [PHASE_2](docs/roadmap/PHASE_2.md) (single-tenant
-  MVP) and [PHASE_3](docs/roadmap/PHASE_3.md) (public signups, billing, teams). The storage
-  layout ([ADR-0007](docs/adr/0007-multi-tenant-storage-layout.md)) and the freemium line
-  ([ADR-0006](docs/adr/0006-oss-core-saas-freemium.md)) are locked; no server code exists.
-  There is no signup, no waitlist, and no date. The self-hosted path is the only path today,
-  and it is feature-complete.
 - Writable multi-node routing — one connector fronting N nodes, with cross-node writes gated
   by per-node seat registration. Requirement captured; ADR unwritten.
 

@@ -1,5 +1,7 @@
 # Architecture 03 — The Scope Model (per-project, in-project, over-many)
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 > The single architectural choice that cashes out BoonyardNN's three-mode promise.
 
 This document elaborates ADR-0003 into practical mechanics: how the `scope` parameter works across the Python API, the CLI, and the MCP server; how an aggregator is set up; what the user does in each mode.
@@ -179,7 +181,7 @@ boonyard umbrella tags --tree
 
 ```
 http://localhost:8765/_aggregate/sse           # OSS local
-https://mcp.boonyardnn.com/jacoboon/_aggregate/sse   # SaaS
+https://mcp.boonyard.com/jacoboon/_aggregate/sse   # SaaS
 ```
 
 The aggregator MCP endpoint accepts the `scope` parameter on every tool call. Write tools (`log_entry`, `log_skill_revision`) are rejected with an error: aggregator endpoints are read-only.

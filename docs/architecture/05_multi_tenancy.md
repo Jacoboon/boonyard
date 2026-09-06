@@ -1,6 +1,8 @@
 # Architecture 05 — Multi-tenancy (users, nodes, teams, ownership)
 
-The SaaS-layer model that wraps the substrate. Strictly speaking, the OSS package has no concept of multi-tenancy — it operates on whatever node file the caller hands it. The multi-tenant model is the web layer (boonyardnn.com) that maps URLs to per-user node files and enforces access control.
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
+The SaaS-layer model that wraps the substrate. Strictly speaking, the OSS package has no concept of multi-tenancy — it operates on whatever node file the caller hands it. The multi-tenant model is the web layer (boonyard.com) that maps URLs to per-user node files and enforces access control.
 
 This document defines the entities, the access semantics, and the lifecycle operations.
 
@@ -38,7 +40,7 @@ plan_overrides optional per-node overrides (e.g., higher rate limit)
 A node is the unit of:
 
 - Storage (one directory: `journal.db` + `boonyard.toml` + `backups/`).
-- MCP endpoint (one URL: `mcp.boonyardnn.com/{user_slug}/{node_slug}/sse`).
+- MCP endpoint (one URL: `mcp.boonyard.com/{user_slug}/{node_slug}/sse`).
 - API key (per-node keys; one node compromise stays isolated; ADR-0008).
 - Access grants (users other than the owner can be granted access — see Teams below).
 - Backup, restore, export, delete (all per-node operations; ADR-0007).
@@ -104,7 +106,7 @@ Teams are a Phase 3 feature; pre-Phase-3 the substrate is solo only.
 
 ## Access control rules
 
-For each request to `mcp.boonyardnn.com/{user_slug}/{node_slug}/...` or the corresponding REST API:
+For each request to `mcp.boonyard.com/{user_slug}/{node_slug}/...` or the corresponding REST API:
 
 1. Resolve `user_slug` to a `user_id`. 404 if no such user.
 2. Resolve `node_slug` within that user to a `node_id`. 404 if no such node (don't leak whether the user exists by returning different error codes).
@@ -115,7 +117,7 @@ For each request to `mcp.boonyardnn.com/{user_slug}/{node_slug}/...` or the corr
 7. Check rate limits.
 8. Allow or deny.
 
-For aggregator endpoints `mcp.boonyardnn.com/{user_slug}/_aggregate/...`:
+For aggregator endpoints `mcp.boonyard.com/{user_slug}/_aggregate/...`:
 
 1. Resolve `user_slug` to `user_id`. 404 if no such user.
 2. Authenticate. The key must have scope `aggregator:...`.
@@ -138,7 +140,7 @@ For aggregator endpoints `mcp.boonyardnn.com/{user_slug}/_aggregate/...`:
    - A `bnyk_...` key is generated (raw shown once, hash stored).
    - The user copies it and pastes into their seat's MCP config.
 5. **User's seat makes its first MCP call.**
-   - Request: `POST mcp.boonyardnn.com/{user_slug}/{node_slug}/sse` with `Authorization: Bearer bnyk_...` and an MCP tool call like `recent`.
+   - Request: `POST mcp.boonyard.com/{user_slug}/{node_slug}/sse` with `Authorization: Bearer bnyk_...` and an MCP tool call like `recent`.
    - SaaS auth layer verifies key, opens the node, runs the query, returns the result.
 
 ## Quotas and rate limits
@@ -186,7 +188,7 @@ Grants are recorded in `system/users.db` as `node_grants(node_id, user_id, acces
 
 A node can also be transferred to a Team, after which all team members have access per their team role.
 
-Team-owned nodes appear under `mcp.boonyardnn.com/{team_slug}/{node_slug}/sse` (the URL prefix becomes the team slug, with a `~/` prefix to distinguish from user slugs that could collide). The aggregator endpoint can include team-owned nodes in scope as long as the requesting user is a team member with read access.
+Team-owned nodes appear under `mcp.boonyard.com/{team_slug}/{node_slug}/sse` (the URL prefix becomes the team slug, with a `~/` prefix to distinguish from user slugs that could collide). The aggregator endpoint can include team-owned nodes in scope as long as the requesting user is a team member with read access.
 
 ## Audit
 

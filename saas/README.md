@@ -11,8 +11,8 @@ directory around the substrate. Two things, and only two:
   JSON-RPC body to the package's `MCPServer.handle()`. Same 18 tools as a self-hosted
   node, byte for byte.
 
-Not here, on purpose: signup, dashboard, billing, teams, `_aggregate`, rate limits.
-Those are slice 2 and Phase 3 (umbrella #334 ¶4, #335).
+Not here yet: signup, dashboard, billing, teams, `_aggregate`, rate limits. The signup
+platform and user database are the next slice (Professor, boonyard #109); the rest is Phase 3.
 
 ## The one rule
 

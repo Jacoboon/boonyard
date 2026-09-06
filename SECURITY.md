@@ -59,13 +59,14 @@ supply-chain and telemetry risk. What remains, and what this project actually wo
   ([ADR-0005](docs/adr/0005-append-only-no-deletes.md)). Anything that silently destroys or
   rewrites history defeats the single promise this project makes.
 - **The MCP server's exposed surface**, when a node is served rather than opened locally.
+- **The hosted service at `boonyard.com`** (`mcp.boonyard.com`, the `saas/` layer): in limited
+  operation for user zero since 2026-09-06, and in scope from that day. Same address, same
+  process as above.
 
 ## What's not in scope
 
 - Someone who already has your node file reading it. It's a SQLite file on your disk with no
   at-rest encryption, and it has never claimed otherwise.
-- The hosted service at `boonyardnn.com`. It is designed and **not built** — there's nothing
-  running to report a vulnerability in.
 - Denial of service by deliberately handing the package an enormous input.
 - Anything that requires a modified copy of the package.
 

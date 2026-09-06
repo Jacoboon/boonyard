@@ -1,5 +1,7 @@
 # ADR 0008 — MCP routing and authentication: per-node endpoints, per-node API keys, scope-aware aggregation
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 **Status:** Accepted
 **Date:** 2026-05-20
 **Deciders:** Jacob (Professor), Cowork-Opus
@@ -61,10 +63,10 @@ http://localhost:8765/{node_slug}/sse          <- multi-node aggregator
 
 The OSS MCP server can serve multiple node files at once (from a config that lists them). No auth — it's localhost, the user is the only actor.
 
-**SaaS (multi-tenant, hosted at boonyardnn.com):**
+**SaaS (multi-tenant, hosted at boonyard.com):**
 
 ```
-https://mcp.boonyardnn.com/{user_slug}/{node_slug}/sse
+https://mcp.boonyard.com/{user_slug}/{node_slug}/sse
 ```
 
 - `user_slug` is the user's chosen URL slug (defaults to a UUID prefix; can be customized to e.g. `jacoboon` if available).
@@ -73,7 +75,7 @@ https://mcp.boonyardnn.com/{user_slug}/{node_slug}/sse
 A second endpoint pattern for the aggregator (paid tier only):
 
 ```
-https://mcp.boonyardnn.com/{user_slug}/_aggregate/sse
+https://mcp.boonyard.com/{user_slug}/_aggregate/sse
 ```
 
 The `_aggregate` endpoint accepts the `scope` parameter on every tool call and routes against multiple node files of the user. `_aggregate` always uses query-only mode for reads (writes targeted via this endpoint are rejected; writes must address a specific node).
@@ -127,7 +129,7 @@ This is enforced at the routing layer, not just convention. The aggregator's con
 The `boonyard` CLI accepts the same auth model when talking to a remote SaaS endpoint:
 
 ```bash
-boonyard --remote https://mcp.boonyardnn.com/jacoboon/planescape \
+boonyard --remote https://mcp.boonyard.com/jacoboon/planescape \
          --key   bnyk_xxxxxxxx \
          recent 20
 ```
@@ -136,11 +138,11 @@ Keys can be stored in `~/.config/boonyard/credentials.toml`:
 
 ```toml
 [default]
-endpoint = "https://mcp.boonyardnn.com/jacoboon/planescape"
+endpoint = "https://mcp.boonyard.com/jacoboon/planescape"
 key      = "bnyk_xxxxxxxx"
 
 [aggregator]
-endpoint = "https://mcp.boonyardnn.com/jacoboon/_aggregate"
+endpoint = "https://mcp.boonyard.com/jacoboon/_aggregate"
 key      = "bnyk_yyyyyyyy"
 ```
 
@@ -154,8 +156,8 @@ boonyard --profile aggregator find "FUSE boot ritual"
 The MCP protocol supports both SSE (Server-Sent Events for streaming) and stateless HTTP. The substrate's tools are all small request/response and don't benefit from streaming, but the SSE path is what the AI seats expect today. Both transports are exposed:
 
 ```
-https://mcp.boonyardnn.com/{user_slug}/{node_slug}/sse    <- SSE (streaming)
-https://mcp.boonyardnn.com/{user_slug}/{node_slug}/http   <- stateless HTTP
+https://mcp.boonyard.com/{user_slug}/{node_slug}/sse    <- SSE (streaming)
+https://mcp.boonyard.com/{user_slug}/{node_slug}/http   <- stateless HTTP
 ```
 
 Same auth, same tool surface, same semantics. SSE is the recommended default.
@@ -189,7 +191,7 @@ Each user has one key; every MCP call includes the node_slug in the scope param.
 
 ### Path-less endpoint, node selected by HTTP header
 
-`https://mcp.boonyardnn.com/sse` with `X-Boonyard-Node: jacoboon/planescape`.
+`https://mcp.boonyard.com/sse` with `X-Boonyard-Node: jacoboon/planescape`.
 
 **Why rejected:** Worse UX (the URL no longer reveals what it does). MCP clients vary in their support for arbitrary headers. Path-based routing is the standard pattern and works everywhere.
 

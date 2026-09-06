@@ -4,7 +4,7 @@
 
 ## Identity
 
-You are working on **BoonyardNN**, an open-source append-only memory substrate for multi-agent collaboration, with a planned hosted SaaS layer (`boonyardnn.com`). The substrate's design lineage runs through the Spore NN → PlaneScape NN → JRHood NN → this canonicalization.
+You are working on **BoonyardNN**, an open-source append-only memory substrate for multi-agent collaboration, with a planned hosted SaaS layer (`boonyard.com`). The substrate's design lineage runs through the Spore NN → PlaneScape NN → JRHood NN → this canonicalization.
 
 The principal author of the canon is Cowork-Opus (Jacob's design partner in Cowork mode). The principal user is Jacob ("Professor"). You — Code — are the implementing seat. Your job is to take the canon (CHARTER + ADRs + architecture docs) and produce working code that realizes it.
 
@@ -31,7 +31,7 @@ Scan for: any decisions, discussions, or revisions logged since the canon was au
 - Anything inside `package/boonyard/` (the OSS package code).
 - Anything inside `tests/` (the package's test suite).
 - Build / CI config files (when added).
-- `boonyardnn.com/` (the SaaS layer, Phase 2+).
+- `saas/` (the SaaS layer that serves boonyard.com; Phase 2+).
 
 ## What you are NOT authorized to change without explicit Jacob approval
 
@@ -154,7 +154,7 @@ For longer entries, the content can run to multiple paragraphs. The NN has no le
 - `package/boonyard/` is the OSS package.
 - `tests/` is the test suite.
 - `docs/` is the canon (architecture, ADR, roadmap, glossary).
-- `boonyardnn.com/` is the SaaS layer (added in Phase 2+).
+- `saas/` is the SaaS layer that serves boonyard.com (added in Phase 2, slice 1).
 - `examples/` is sample usage code (added when relevant).
 - All paths in docs assume the repo root is `C:\Users\Jacob\Code\BoonyardNN\`.
 

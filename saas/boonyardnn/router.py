@@ -12,10 +12,10 @@ Access-control order is arch 05's, verbatim: resolve user (404) → resolve node
 (ADR-0008's table) and ``_aggregate`` are Phase 3 / paid tier and are NOT here —
 there is no placeholder pretending otherwise.
 
-Auth forms (both, always): ``Authorization: Bearer bnyk_…`` OR the key as the
-trailing path segment — the capability-URL shape every live connector uses,
-because the claude.ai dialog has no header field. Comparison is
-``hmac.compare_digest`` on sha256 hashes (registry).
+Auth forms (both, always): ``Authorization: Bearer bnyk_…`` (preferred — the
+claude.ai connector dialog gained a header field by 2026-09-06) OR the key as the
+trailing path segment — the capability-URL shape for clients that still lack one.
+Comparison is ``hmac.compare_digest`` on sha256 hashes (registry).
 
 **The URL is never logged.** It may carry the key. ``log_message`` is a no-op,
 exactly as in the package; an unexpected exception logs its type name only.

@@ -1,5 +1,7 @@
 # Architecture 04 — Distribution: package + SaaS, four access surfaces, same code
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 How users get BoonyardNN, and how the same engine drives every flavor of access.
 
 ## The four ways to use BoonyardNN
@@ -45,12 +47,12 @@ docker run -d \
 
 The same package, plus a minimal web shell (Flask) and a Dockerfile. For users who want hosted-style ergonomics without using the SaaS. The image is built from the OSS repo; runs the same boonyard code; uses the same SQLite-file storage.
 
-This is also the deployment shape the SaaS uses internally — boonyardnn.com is a hardened, multi-tenant, billed wrapper around the same Docker image fundamentals.
+This is also the deployment shape the SaaS uses internally — boonyard.com is a hardened, multi-tenant, billed wrapper around the same Docker image fundamentals.
 
-### 4. `boonyardnn.com` (SaaS)
+### 4. `boonyard.com` (SaaS)
 
 ```
-1. Sign up at boonyardnn.com.
+1. Sign up at boonyard.com.
 2. Create a node ("planescape").
 3. Copy the per-node MCP URL + API key.
 4. Point your AI seats / CLI at it.
@@ -120,7 +122,7 @@ Same in pip-installed, vendored (via `python -m boonyard.cli`), Docker (via `doc
 
 ### MCP server
 
-Long-lived process. Default port 8765 locally; in SaaS, served behind `mcp.boonyardnn.com`. Path-based routing maps URL segments to node files. Same tool definitions across deployments. (Full surface in `06_mcp_surface.md`.)
+Long-lived process. Default port 8765 locally; in SaaS, served behind `mcp.boonyard.com`. Path-based routing maps URL segments to node files. Same tool definitions across deployments. (Full surface in `06_mcp_surface.md`.)
 
 ### REST API (SaaS only)
 
@@ -144,7 +146,7 @@ For the web dashboard, for third-party integrations, for users who prefer HTTP t
 
 ## How the SaaS reuses the OSS package
 
-Inside `boonyardnn.com`, the entire data layer is:
+Inside `boonyard.com`, the entire data layer is:
 
 ```python
 import boonyard
@@ -179,7 +181,7 @@ The SaaS routing layer is web-framework code. The data layer is *literally* the 
 
 - **`boonyard` package:** semantic versioning. Major version = schema version (so package v3 corresponds to schema v3). Minor = additive features. Patch = bug fixes. Release tagging in git, published to PyPI.
 - **`boonyardnn/boonyard:latest` Docker image:** built from each tagged release; `:vX.Y.Z` tags for specific versions; `:edge` for HEAD-of-main.
-- **`boonyardnn.com` SaaS:** deployed continuously from main after CI passes. The deployed package version is shown in the dashboard footer. The SaaS may run ahead of the latest pip release for a few days while new features bake.
+- **`boonyard.com` SaaS:** deployed continuously from main after CI passes. The deployed package version is shown in the dashboard footer. The SaaS may run ahead of the latest pip release for a few days while new features bake.
 
 Migration: a v(N)→v(N+1) bump comes with a migration script in `package/boonyard/migrations/v(N)_to_v(N+1).py`. The SaaS runs the migration as part of deployment; OSS users run it via `boonyard migrate`. Migration is idempotent; nodes already on the target version no-op.
 

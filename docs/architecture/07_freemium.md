@@ -1,6 +1,8 @@
 # Architecture 07 — Freemium tiers (feature matrix, rate limits, the line)
 
-The operational expression of ADR-0006's "never paywall an algorithm" principle. This document is the source of truth for what each tier of boonyardnn.com gets. OSS is omitted from the matrix here because OSS gets everything algorithmic — see ADR-0006.
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
+The operational expression of ADR-0006's "never paywall an algorithm" principle. This document is the source of truth for what each tier of boonyard.com gets. OSS is omitted from the matrix here because OSS gets everything algorithmic — see ADR-0006.
 
 ## The line
 

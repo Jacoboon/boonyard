@@ -1,5 +1,7 @@
 # ADR 0006 — OSS core + freemium hosted SaaS; never paywall the algorithm
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 **Status:** Accepted
 **Date:** 2026-05-20
 **Deciders:** Jacob (Professor), Cowork-Opus
@@ -11,7 +13,7 @@
 BoonyardNN has two product surfaces:
 
 1. The **boonyard** Python package — open source, vendorable, stdlib-only, runs anywhere Python runs.
-2. **boonyardnn.com** — a hosted multi-tenant service where users sign up, spawn nodes, and get MCP endpoints without running their own infrastructure.
+2. **boonyard.com** — a hosted multi-tenant service where users sign up, spawn nodes, and get MCP endpoints without running their own infrastructure.
 
 The strategic question is the relationship between the two:
 
@@ -30,7 +32,7 @@ The dogfood pact (CHARTER) further constrains: this isn't about extracting maxim
 
 The boonyard package is licensed under Apache 2.0. This permits:
 
-- Commercial use (including by businesses competing with boonyardnn.com).
+- Commercial use (including by businesses competing with boonyard.com).
 - Modification and redistribution (including private forks).
 - Patent grant (the patent-defense properties of Apache vs. MIT are worth the slightly heavier license text).
 
@@ -43,11 +45,11 @@ MIT was considered and rejected only for the missing patent grant; for a substra
 
 ### The OSS package and the SaaS run the same code
 
-The boonyardnn.com web service is a deployment that *imports* the boonyard package. There is no "boonyard pro" private fork. There is no algorithm in the SaaS that isn't in the OSS package. The hosted product's value is *not running it yourself*, not "more features."
+The boonyard.com web service is a deployment that *imports* the boonyard package. There is no "boonyard pro" private fork. There is no algorithm in the SaaS that isn't in the OSS package. The hosted product's value is *not running it yourself*, not "more features."
 
 ```
 +----------------------------------------------+
-|             boonyardnn.com                   |
+|             boonyard.com                   |
 |   web layer (auth, billing, dashboard, ...) | <- not in the OSS package
 +----------------------------------------------+
 |         boonyard package (OSS, Apache 2.0)   | <- same code as `pip install boonyard`
@@ -67,7 +69,7 @@ The OSS user `pip install boonyard`s and gets exactly the same engine the SaaS r
 | The boonyard MCP server (single-tenant, local) | OSS, always free |
 | The schema profile + all extras infrastructure | OSS, always free |
 | The aggregator (over-many mode, local) | OSS, always free |
-| Hosted account on boonyardnn.com | Free tier exists; see below |
+| Hosted account on boonyard.com | Free tier exists; see below |
 | Hosted MCP endpoint per node | Free tier; rate-limited; see below |
 | Hosted aggregator (cross-node Umbrella view) | Paid; the operational cost of running this for users is real |
 | Web dashboard UI | Free for owned nodes; team/shared dashboards are paid |
@@ -165,7 +167,7 @@ Rejected on principle and on practicality. The substrate's adoption depends on f
 ## References
 
 - CHARTER.md — "Load-bearing beliefs / The OSS package is the SaaS"
-- glossary.md — `boonyardnn.com`, `SaaS`, `vendoring`
+- glossary.md — `boonyard.com`, `SaaS`, `vendoring`
 - ADR-0001 — stdlib-only (constrains the package; the SaaS is unconstrained)
 - ADR-0007 — multi-tenant storage layout (how the SaaS organizes user data)
 - ADR-0008 — MCP routing + auth (how SaaS-hosted MCP endpoints work)

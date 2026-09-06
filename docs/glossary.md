@@ -1,5 +1,7 @@
 # Glossary
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 Locked vocabulary for BoonyardNN. If a term in any other doc has a definition here, this one wins. New terms get added by appending, alphabetically. Renames get a `→` redirect and the original term stays — the substrate's append-only ethos applies to its own vocabulary.
 
 ---
@@ -14,7 +16,9 @@ Locked vocabulary for BoonyardNN. If a term in any other doc has a definition he
 
 **BoonyardNN** (camel-case) — The whole product / system, including the package, the SaaS, the canon, the community. When you see this capitalization, it's the umbrella term.
 
-**boonyardnn.com** — The hosted SaaS domain. Where a user can sign up, spawn nodes without running their own server, and get a hosted MCP endpoint per node. Runs the same boonyard package under the hood. See ADR-0006, ADR-0007.
+**boonyardnn.com** → boonyard.com. Retired 2026-09-06 (Professor, boonyard #109): the gen0, vectorscape-era registration; never the product's domain after July 2026. Any remaining mention is history, not a target.
+
+**boonyard.com** — The hosted SaaS domain. Where a user can sign up, spawn nodes without running their own server, and get a hosted MCP endpoint per node. Runs the same boonyard package under the hood. See ADR-0006, ADR-0007.
 
 **Code** — A Claude Code instance, or any implementing agent that converts the canon into running source. In the live NN's vocabulary, "Code" writes entries under `agent='code'`. In this repo's vocabulary, "Code" is the principal executor of work designed in the canon.
 
@@ -60,7 +64,7 @@ Locked vocabulary for BoonyardNN. If a term in any other doc has a definition he
 
 **root-anchored revision** — A skill revision whose `related_id` points at the *original* skill entry, not at the immediate predecessor revision. Necessary because `get_thread` is one level deep — chaining `v3 → v2 → v1` would silently drop v3 from `get_thread(v1)`. The convention is locked in v1.1 and re-locked in this canon. See ADR-0004.
 
-**SaaS** — Software as a Service. In BoonyardNN context, the hosted offering at boonyardnn.com: user accounts, node spawning, hosted MCP endpoints, web dashboard, optional billing tiers. The OSS package is what runs underneath the SaaS. See ADR-0006.
+**SaaS** — Software as a Service. In BoonyardNN context, the hosted offering at boonyard.com: user accounts, node spawning, hosted MCP endpoints, web dashboard, optional billing tiers. The OSS package is what runs underneath the SaaS. See ADR-0006.
 
 **schema profile** — The `boonyard.toml` config file that sits next to each node's `journal.db`. Declares the node's name, schema version, allowed agents, allowed entry_types, reserved tag namespaces, whether the extras column is enabled, and which extras fields are hot-indexed. The per-project customization layer. See ADR-0002.
 

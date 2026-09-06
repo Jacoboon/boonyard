@@ -20,6 +20,6 @@ github.com/Jacoboon/boonyard · contact: hello@boonyard.com · boonyardnn — bu
 
 ## what NOT to write, and why
 - No "founders", no "free for a year", no prices, and NO signup/waitlist call to action — Professor, 9/6: "I'm not going to advertise a signup list for a thing that is nowhere near ready." The founders cohort is recruited by his hand (SkyeNet Discord, #ai-tools) when user zero is live, not by the page.
-- No boonyardnn.com link — the domain answers nothing useful yet (#314).
+- No link to the legacy domain (`boonyardnn.com`, retired 2026-09-06 per boonyard #109) — it answered nothing useful (#314). The product domain is boonyard.com, which the page already is.
 - No "smarter NN" / arc-map / intelligence language — ruled Boonyard capability today (umbrella #324) but undesigned; a page that promises it is a page that lies.
 - No signup form, no cookies, no analytics — keeps the page collecting nothing, so no privacy/T&C page is owed yet (umbrella #331).

@@ -1,5 +1,7 @@
 # ADR 0007 — Multi-tenant storage layout: filesystem-per-user, file-per-node
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 **Status:** Accepted
 **Date:** 2026-05-20
 **Deciders:** Jacob (Professor), Cowork-Opus
@@ -8,7 +10,7 @@
 
 ## Context
 
-The hosted SaaS at boonyardnn.com needs to store many users' many nodes. ADR-0003 already locks the one-SQLite-file-per-node decision; this ADR fills in the multi-tenant layer that wraps it: where on disk things go, how users are isolated, how backups happen, how exports work, and how the no-lock-in promise is mechanically delivered.
+The hosted SaaS at boonyard.com needs to store many users' many nodes. ADR-0003 already locks the one-SQLite-file-per-node decision; this ADR fills in the multi-tenant layer that wraps it: where on disk things go, how users are isolated, how backups happen, how exports work, and how the no-lock-in promise is mechanically delivered.
 
 The constraints:
 
@@ -157,7 +159,7 @@ Considered briefly for the SaaS, to support "see every tag every user has ever u
 ## References
 
 - CHARTER.md — "Load-bearing beliefs / No lock-in, ever"
-- glossary.md — `node`, `boonyardnn.com`, `vendoring`
+- glossary.md — `node`, `boonyard.com`, `vendoring`
 - ADR-0003 — DB-per-node decision (the foundation this builds on)
 - ADR-0005 — append-only (the redact-vs-delete distinction)
 - ADR-0006 — OSS/SaaS split (the "same code" property this preserves)

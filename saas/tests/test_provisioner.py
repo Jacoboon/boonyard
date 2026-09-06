@@ -118,9 +118,9 @@ class ExportTests(unittest.TestCase):
 
 class UrlTests(unittest.TestCase):
     def test_key_urls_two_forms(self):
-        urls = provisioner.key_urls("https://mcp.boonyardnn.com", "jacoboon", "test-0", "bnyk_x")
-        self.assertEqual(urls["header"], "https://mcp.boonyardnn.com/jacoboon/test-0")
-        self.assertEqual(urls["capability"], "https://mcp.boonyardnn.com/jacoboon/test-0/bnyk_x")
+        urls = provisioner.key_urls("https://mcp.boonyard.com", "jacoboon", "test-0", "bnyk_x")
+        self.assertEqual(urls["header"], "https://mcp.boonyard.com/jacoboon/test-0")
+        self.assertEqual(urls["capability"], "https://mcp.boonyard.com/jacoboon/test-0/bnyk_x")
 
     def test_trailing_slash_on_base_is_tolerated(self):
         urls = provisioner.key_urls("http://127.0.0.1:8800/", "a", "b", "bnyk_x")

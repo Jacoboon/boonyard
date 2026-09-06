@@ -1,6 +1,8 @@
 # Phase 2 — SaaS MVP for User Zero
 
-> boonyardnn.com goes live. Jacob signs up on it like any future user would. The SaaS-hosted version of his existing PlaneScape / JRHood nodes runs alongside (or replaces) the self-hosted ones. The MVP serves exactly one user, but it does so end-to-end with the actual production code path that other users will eventually hit.
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
+> boonyard.com goes live. Jacob signs up on it like any future user would. The SaaS-hosted version of his existing PlaneScape / JRHood nodes runs alongside (or replaces) the self-hosted ones. The MVP serves exactly one user, but it does so end-to-end with the actual production code path that other users will eventually hit.
 
 ## Goal
 
@@ -19,7 +21,7 @@ A Flask (or equivalent, decided at Phase 2 kickoff) application that runs on a D
 Structure:
 
 ```
-boonyardnn.com/
+saas/                        # in-repo name of the layer that serves boonyard.com (slice 1 shipped it as saas/boonyardnn/)
     deploy/                  # systemd / nginx config, deploy scripts (paramiko-based, like JRHood's)
     server/
         app.py               # Flask app entry
@@ -78,16 +80,16 @@ OAuth providers (GitHub, Google) deferred to Phase 3.
 
 ### 5. Per-node MCP endpoints work
 
-`https://mcp.boonyardnn.com/{user_slug}/{node_slug}/sse`
+`https://mcp.boonyard.com/{user_slug}/{node_slug}/sse`
 
 For Jacob:
-- `mcp.boonyardnn.com/jacoboon/planescape/sse`
-- `mcp.boonyardnn.com/jacoboon/jrhood/sse`
-- `mcp.boonyardnn.com/jacoboon/spore/sse` (when Spore migrates in)
+- `mcp.boonyard.com/jacoboon/planescape/sse`
+- `mcp.boonyard.com/jacoboon/jrhood/sse`
+- `mcp.boonyard.com/jacoboon/spore/sse` (when Spore migrates in)
 
 Routing: parse user_slug + node_slug → resolve to user_id + node_id → authenticate bearer key → open node DB → run MCP tool → return.
 
-Aggregator endpoint `mcp.boonyardnn.com/jacoboon/_aggregate/sse` works with an aggregator key listing the user's nodes.
+Aggregator endpoint `mcp.boonyard.com/jacoboon/_aggregate/sse` works with an aggregator key listing the user's nodes.
 
 ### 6. Backups + exports actually run
 
@@ -108,7 +110,7 @@ Recommendation: Option B for the first month. Validate the SaaS for one node (e.
 
 ### 8. The cloudflared tunnel pattern
 
-`nn.vectorscape.uk` (the existing PlaneScape NN URL) and `mcp.boonyardnn.com` are both exposed via Cloudflare tunnels (cloudflared) — the same pattern PlaneScape's NN already uses. This avoids needing to open ports on the droplet directly and gives free DDoS protection.
+`nn.vectorscape.uk` (the existing PlaneScape NN URL) and `mcp.boonyard.com` are both exposed via Cloudflare tunnels (cloudflared) — the same pattern PlaneScape's NN already uses. This avoids needing to open ports on the droplet directly and gives free DDoS protection.
 
 After Phase 2, if Jacob wants `nn.vectorscape.uk/sse` to route to the SaaS-hosted PlaneScape node, that's a Cloudflare config change (CNAME or transform rule); the OSS hosted version remains an alternative.
 
@@ -123,7 +125,7 @@ Phase 2 deploys minimum operational visibility:
 
 ### 10. Documentation for "future users" (drafted, not yet public)
 
-`boonyardnn.com/docs/` (or a `/docs` subdir of the landing page) — Phase 2 drafts the user-facing docs, marked DRAFT until Phase 3:
+`boonyard.com/docs/` (or a `/docs` subdir of the landing page) — Phase 2 drafts the user-facing docs, marked DRAFT until Phase 3:
 
 - Getting started (signup → spawn node → first MCP call).
 - The schema profile (how to customize for your project).
@@ -140,15 +142,15 @@ These docs aren't linked from the landing page until Phase 3; they exist so Jaco
 agent: code or jacob
 entry_type: implementation
 tags: implementation,boonyard,phase-2,milestone,saas
-content: BoonyardNN Phase 2 complete. boonyardnn.com is live. User zero (Jacob) is signed up. Nodes: planescape, jrhood [and others as migrated]. MCP endpoints reachable at mcp.boonyardnn.com/jacoboon/{node}/sse. Aggregator at .../_aggregate/sse. <N> days of soak time with zero data loss, all backups verified. Phase 3 (public + billing) is gated on Jacob's review of operational evidence.
+content: BoonyardNN Phase 2 complete. boonyard.com is live. User zero (Jacob) is signed up. Nodes: planescape, jrhood [and others as migrated]. MCP endpoints reachable at mcp.boonyard.com/jacoboon/{node}/sse. Aggregator at .../_aggregate/sse. <N> days of soak time with zero data loss, all backups verified. Phase 3 (public + billing) is gated on Jacob's review of operational evidence.
 ```
 
 ## Acceptance criteria
 
 Phase 2 is complete when:
 
-1. `boonyardnn.com` resolves to a logged-in dashboard for Jacob, with full per-node management.
-2. `mcp.boonyardnn.com/jacoboon/{node}/sse` works for at least one node, returning correct results for `recent`, `log_entry`, and one each of the other tools from `architecture/06_mcp_surface.md`.
+1. `boonyard.com` resolves to a logged-in dashboard for Jacob, with full per-node management.
+2. `mcp.boonyard.com/jacoboon/{node}/sse` works for at least one node, returning correct results for `recent`, `log_entry`, and one each of the other tools from `architecture/06_mcp_surface.md`.
 3. The aggregator endpoint works across at least two of Jacob's nodes.
 4. Nightly backups have run successfully for ≥7 consecutive days; ≥1 successful restore-and-verify has been performed.
 5. Jacob has used the SaaS-hosted node from at least one of his seats for ≥1 week with no production incidents.

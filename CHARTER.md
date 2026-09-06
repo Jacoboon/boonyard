@@ -1,5 +1,7 @@
 # BoonyardNN — Charter
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 > The shared memory substrate that earns its keep across every project that adopts it.
 
 This is the soul document. Every other file in this repo descends from the beliefs here. When a design question splits, this is the tiebreaker. When a feature request lands, this is the filter. When the work feels like it's drifting, this is the snap-back.
@@ -14,7 +16,7 @@ BoonyardNN is an append-only, queryable, threaded memory substrate for multi-age
 
 That's it. That's the whole magic. Everything else — tag ontologies, skills, the MCP doorway, the per-project / over-many scope model, the SaaS — is shaped around protecting that primitive and making it convenient to live inside.
 
-The substrate is being lifted out of where it was born (a `_dev/journal/` folder inside the PlaneScape codebase, adapted from the earlier Spore NN, used in passing across at least four other projects) and made into a thing of its own. The new home is this repo. The new public face is `boonyardnn.com`. The pact with the world is open source first, hosted convenience second, no lock-in ever.
+The substrate is being lifted out of where it was born (a `_dev/journal/` folder inside the PlaneScape codebase, adapted from the earlier Spore NN, used in passing across at least four other projects) and made into a thing of its own. The new home is this repo. The new public face is `boonyard.com`. The pact with the world is open source first, hosted convenience second, no lock-in ever.
 
 ## What BoonyardNN is not
 
@@ -40,7 +42,7 @@ BoonyardNN is not telemetric. The OSS package phones home to nothing. The hosted
 
 **No lock-in, ever.** The data is a SQLite file. You can download it, open it in any SQLite tool, point your own MCP server at it, copy it to another machine, fork the code, walk away. Exit cost is `cp` of one file. This is non-negotiable. The SaaS is convenience; the substrate is yours.
 
-**The OSS package is the SaaS.** boonyardnn.com runs the same boonyard package the OSS user pip-installs. The hosted product is *deployment, multi-tenancy, billing, and convenience*, not a different feature set. We do not paywall algorithms. We charge for the operating cost of running it for you. See ADR-0006.
+**The OSS package is the SaaS.** boonyard.com runs the same boonyard package the OSS user pip-installs. The hosted product is *deployment, multi-tenancy, billing, and convenience*, not a different feature set. We do not paywall algorithms. We charge for the operating cost of running it for you. See ADR-0006.
 
 ## The dogfood pact (user zero)
 

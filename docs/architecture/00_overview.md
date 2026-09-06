@@ -1,10 +1,12 @@
 # Architecture 00 — System Overview
 
+> **2026-09-06 — domain correction (Professor, boonyard #109).** The product domain is **boonyard.com**. This document originally named `boonyardnn.com` — the gen0, vectorscape-era registration — which is retired in full; the name is substituted throughout below. Only the domain changed; the decisions are as written.
+
 The whole BoonyardNN system in one document. Read this first; everything in `01_*` through `08_*` is a deep-dive on a piece of what's described here.
 
 ## The 100-foot view
 
-BoonyardNN is an append-only, queryable, threaded memory substrate. The substrate is a small Python package that operates on SQLite files. Around the package sit four access surfaces (Python API, CLI, MCP server, REST API for the SaaS) and two deployment shapes (OSS — run it yourself; SaaS — let boonyardnn.com run it for you). At the center of all of it is the **entry**: one row of tagged, threaded, attributed text in an append-only table.
+BoonyardNN is an append-only, queryable, threaded memory substrate. The substrate is a small Python package that operates on SQLite files. Around the package sit four access surfaces (Python API, CLI, MCP server, REST API for the SaaS) and two deployment shapes (OSS — run it yourself; SaaS — let boonyard.com run it for you). At the center of all of it is the **entry**: one row of tagged, threaded, attributed text in an append-only table.
 
 ```
                           +-----------------------------+
@@ -25,7 +27,7 @@ BoonyardNN is an append-only, queryable, threaded memory substrate. The substrat
                   v                                           v
     +-------------------------+              +----------------------------+
     | OSS deployment:         |              | SaaS deployment:           |
-    | the user runs the       |              | boonyardnn.com runs the    |
+    | the user runs the       |              | boonyard.com runs the    |
     | boonyard package        |              | same boonyard package      |
     | on their own machine    |              | on infrastructure for them |
     +-------------------------+              +----------------------------+
@@ -124,7 +126,7 @@ No MCP server. No CLI in the loop (for the runtime). The package is just an impo
 
 ```
 +-------------------------------------------------------------+
-|   boonyardnn.com (DigitalOcean droplet, or wherever)        |
+|   boonyard.com (DigitalOcean droplet, or wherever)        |
 |                                                             |
 |   +------------+   +-----------------+   +---------------+  |
 |   |  AI seat   |-->| mcp.boonyardnn  |-->| boonyard pkg  |  |

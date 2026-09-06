@@ -119,11 +119,11 @@ class AcceptanceFlowTests(CliTestCase):
         self.assertNotIn(store["keys"][0]["hashed_secret"], out)
 
     def test_public_base_env_changes_the_printed_urls_only(self):
-        os.environ["BOONYARDNN_PUBLIC_BASE"] = "https://mcp.boonyardnn.com"
+        os.environ["BOONYARDNN_PUBLIC_BASE"] = "https://mcp.boonyard.com"
         self.cmd("user", "add", "alice", "--email", "a@example.test")
         self.cmd("node", "add", "alice", "n1")
         _code, out, _ = self.cmd("key", "add", "alice", "n1")
-        self.assertIn("https://mcp.boonyardnn.com/alice/n1", out)
+        self.assertIn("https://mcp.boonyard.com/alice/n1", out)
         self.assertNotIn("127.0.0.1", out)
 
 
