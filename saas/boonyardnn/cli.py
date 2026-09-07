@@ -1,4 +1,4 @@
-"""``boonyardnn`` — provisioning by hand, and ``serve`` for the router.
+"""``boonyardnn`` — provisioning by hand, ``serve`` for the router, ``serve-web`` for the app.
 
     python -m boonyardnn [--root DIR] user add <slug> --email <e>
                                      user list
@@ -9,14 +9,23 @@
                                      key list <user> <node>
                                      export <user> <node>
                                      serve [--host H] [--port P]
+                                     serve-web [--host H] [--port P]
+                                     account list
+                                     account founders
+                                     account import <slug> --email <e> [--plan owner]
+                                     account link <email>
+                                     mail test <to>
 
 The data root is ``--root`` or ``$BOONYARDNN_DATA_ROOT`` — never a silent default,
-because these commands create 0700 directories. ``$BOONYARDNN_PUBLIC_BASE`` affects
-only what ``key add`` prints (default ``http://127.0.0.1:8800``).
+because these commands create 0700 directories. ``$BOONYARDNN_PUBLIC_BASE`` is the
+router's public URL (what ``key add`` prints and what the dashboard shows);
+``$BOONYARDNN_WEB_BASE`` is the app's (the links in mail). Mail: ``$BOONYARDNN_MAIL``
+= ``agentmail`` | ``log`` | ``none`` (see ``mailer.py``).
 
 Exit codes mirror the package: 0 ok; 1 not found; 2 usage / validation. All
 human-facing output lives here; the library modules never print. The raw key is
-printed by ``key add`` exactly once and by nothing else.
+printed by ``key add`` exactly once and by nothing else; ``account link`` prints a
+one-time sign-in link, once, for the hour the mailer is down.
 """
 
 import argparse
@@ -25,8 +34,11 @@ import sys
 from pathlib import Path
 
 from . import __version__, adapter, provisioner
+from .accounts import DEFAULT_FOUNDER_SEATS, AccountError, Accounts
+from .mailer import MailError, mailer_from_env
 from .registry import NotFoundError, Registry, RegistryError
 from .router import DEFAULT_HOST, DEFAULT_PORT, serve
+from .web import DEFAULT_WEB_PORT, PREFIX, WebApp, serve_web
 
 EXIT_OK = 0
 EXIT_NOT_FOUND = 1
@@ -34,7 +46,10 @@ EXIT_USAGE = 2
 
 ENV_ROOT = "BOONYARDNN_DATA_ROOT"
 ENV_PUBLIC_BASE = "BOONYARDNN_PUBLIC_BASE"
+ENV_WEB_BASE = "BOONYARDNN_WEB_BASE"
+ENV_FOUNDER_SEATS = "BOONYARDNN_FOUNDER_SEATS"
 DEFAULT_PUBLIC_BASE = "http://127.0.0.1:8800"
+DEFAULT_WEB_BASE = "http://127.0.0.1:8801"
 
 
 class _Usage(Exception):
@@ -48,8 +63,19 @@ def _registry(args) -> Registry:
     return Registry(Path(root))
 
 
+def _accounts(args) -> Accounts:
+    seats = os.environ.get(ENV_FOUNDER_SEATS)
+    return Accounts(
+        _registry(args).root, founder_seats=int(seats) if seats else DEFAULT_FOUNDER_SEATS
+    )
+
+
 def _public_base() -> str:
     return os.environ.get(ENV_PUBLIC_BASE) or DEFAULT_PUBLIC_BASE
+
+
+def _web_base() -> str:
+    return os.environ.get(ENV_WEB_BASE) or DEFAULT_WEB_BASE
 
 
 def _table(rows: list[list[str]], header: list[str]) -> None:
@@ -156,7 +182,7 @@ def cmd_key(args) -> int:
 
 
 # --------------------------------------------------------------------------
-# export / serve
+# export / serve / serve-web
 # --------------------------------------------------------------------------
 def cmd_export(args) -> int:
     reg = _registry(args)
@@ -178,12 +204,91 @@ def cmd_serve(args) -> int:
     return EXIT_OK
 
 
+def cmd_serve_web(args) -> int:
+    reg = _registry(args)
+    acc = _accounts(args)
+    mailer = mailer_from_env()
+    app = WebApp(reg, acc, mailer, web_base=_web_base(), mcp_base=_public_base())
+    founders = acc.founders()
+    print(
+        f"serving boonyardnn web {__version__} on {args.host}:{args.port}{PREFIX} -- "
+        f"root {reg.root}, mail {type(mailer).__name__}, "
+        f"founders {founders['taken']}/{founders['seats']}, "
+        f"links {app.web_base}{PREFIX}, mcp {app.mcp_base}",
+        flush=True,
+    )
+    serve_web(app, host=args.host, port=args.port)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# account / mail
+# --------------------------------------------------------------------------
+def cmd_account(args) -> int:
+    acc = _accounts(args)
+    if args.account_cmd == "list":
+        rows = acc.list_accounts()
+        if not rows:
+            print("(no accounts)")
+            return EXIT_OK
+        _table(
+            [
+                [
+                    a.slug,
+                    a.plan + (f" #{a.founder_no}" if a.founder_no else ""),
+                    "verified" if a.verified else "unverified",
+                    "pw" if a.has_password else "-",
+                    a.created_at,
+                    a.last_login_at or "-",
+                    a.email,
+                ]
+                for a in rows
+            ],
+            ["slug", "plan", "status", "password", "created_at", "last_login_at", "email"],
+        )
+        return EXIT_OK
+    if args.account_cmd == "founders":
+        f = acc.founders()
+        print(f"founders: {f['taken']} of {f['seats']} seats taken, {f['open']} open")
+        return EXIT_OK
+    if args.account_cmd == "import":
+        reg = _registry(args)
+        if reg.get_user(args.slug) is None:
+            raise NotFoundError(f"no registry user {args.slug!r} — import is for provisioned users")
+        account = acc.import_user(args.slug, args.email, plan=args.plan)
+        print(f"imported {account.slug} as {account.plan} ({account.account_id})")
+        return EXIT_OK
+    if args.account_cmd == "link":
+        found = acc.issue_link_token(args.email)
+        if found is None:
+            raise NotFoundError(f"no account for {args.email!r}")
+        account, kind, token = found
+        path = "/verify" if kind == "verify" else "/login/link"
+        print(f"{kind} link for {account.slug} (one use; shown once):")
+        print(f"  {_web_base()}{PREFIX}{path}?t={token}")
+        return EXIT_OK
+    return EXIT_USAGE
+
+
+def cmd_mail(args) -> int:
+    if args.mail_cmd == "test":
+        mailer = mailer_from_env()
+        try:
+            mailer.send(args.to, "Boonyard mail test", "If you can read this, the sender works.\n")
+        except MailError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        print(f"sent a test mail to {args.to} via {type(mailer).__name__}")
+        return EXIT_OK
+    return EXIT_USAGE
+
+
 # --------------------------------------------------------------------------
 # Parser
 # --------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="boonyardnn", description="Hosted-layer provisioning and the path router."
+        prog="boonyardnn", description="Hosted-layer provisioning, the path router and the web app."
     )
     parser.add_argument("--version", action="version", version=f"boonyardnn {__version__}")
     parser.add_argument("--root", help=f"data root (default: ${ENV_ROOT})")
@@ -230,6 +335,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
     p.set_defaults(func=cmd_serve)
 
+    p = sub.add_parser("serve-web", help="run the signup/dashboard app (stdlib http.server)")
+    p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument("--port", type=int, default=DEFAULT_WEB_PORT)
+    p.set_defaults(func=cmd_serve_web)
+
+    p = sub.add_parser(
+        "account", help="account list | founders | import <slug> --email E | link <email>"
+    )
+    acs = p.add_subparsers(dest="account_cmd", required=True)
+    acs.add_parser("list", help="every account: plan, verification, password set or not")
+    acs.add_parser("founders", help="the founders counter")
+    imp = acs.add_parser("import", help="register a provisioned registry user as an account")
+    imp.add_argument("slug")
+    imp.add_argument("--email", required=True)
+    imp.add_argument("--plan", default="owner", choices=["owner", "free", "founder"])
+    ln = acs.add_parser("link", help="print a one-time sign-in/verify link (mailer down)")
+    ln.add_argument("email")
+    p.set_defaults(func=cmd_account)
+
+    p = sub.add_parser(
+        "mail", help="mail test <to> — send one message through the configured sender"
+    )
+    ms = p.add_subparsers(dest="mail_cmd", required=True)
+    t = ms.add_parser("test", help="send a test message")
+    t.add_argument("to")
+    p.set_defaults(func=cmd_mail)
+
     return parser
 
 
@@ -242,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
     except NotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_NOT_FOUND
-    except (_Usage, RegistryError, ValueError, OSError) as exc:
+    except (_Usage, RegistryError, AccountError, MailError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 

@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boonyardnn"
-# Unversioned until it deploys (CODE_ORDER_PHASE2_SLICE1 §3): a dev marker, no tag.
-version = "0.1.0.dev0"
-description = "The hosted layer for boonyard: per-user provisioning and the path router."
+# Dev marker, no tag: 0.1 = slice 1 (provisioner + router), 0.2 = slice 2 (accounts + web app).
+version = "0.2.0.dev0"
+description = "The hosted layer for boonyard: provisioning, the path router, signup and the dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Jacob Reed" }]

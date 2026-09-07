@@ -8,12 +8,16 @@ import json
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from boonyardnn import provisioner
+from boonyardnn.accounts import Accounts
+from boonyardnn.mailer import LogMailer
 from boonyardnn.registry import Registry
 from boonyardnn.router import Router, make_httpd
+from boonyardnn.web import PREFIX, WebApp, make_web_httpd
 
 
 def rpc(method: str, params: dict | None = None, rid: int = 1) -> dict:
@@ -96,3 +100,92 @@ class ServedRouter:
         except urllib.error.HTTPError as err:
             raw = err.read()
             return err.code, (json.loads(raw) if raw else None), dict(err.headers)
+
+
+class ServedWeb:
+    """Start the web app on an ephemeral port with a LogMailer; a tiny cookie-keeping client.
+
+    Redirects are NOT followed (a 303 is an assertion target); cookies from
+    ``Set-Cookie`` are kept per client and sent back on every request.
+    """
+
+    def __init__(
+        self, registry: Registry, accounts: Accounts, *, mcp_base: str = "http://mcp.test"
+    ):
+        self.mailer = LogMailer()
+        self.app = WebApp(
+            registry,
+            accounts,
+            self.mailer,
+            web_base="http://127.0.0.1:0",  # patched once the port is known
+            mcp_base=mcp_base,
+            secure_cookies=False,
+        )
+        self.httpd = make_web_httpd(self.app, host="127.0.0.1", port=0)
+        self.port = self.httpd.server_address[1]
+        self.app.web_base = f"http://127.0.0.1:{self.port}"
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.cookies: dict[str, str] = {}
+
+    def __enter__(self) -> "ServedWeb":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def url(self, path: str = "/") -> str:
+        return f"http://127.0.0.1:{self.port}{PREFIX}{path}"
+
+    def _send(self, req) -> tuple[int, dict, bytes]:
+        if self.cookies:
+            req.add_header("Cookie", "; ".join(f"{k}={v}" for k, v in self.cookies.items()))
+        opener = urllib.request.build_opener(_NoRedirect)
+        try:
+            with opener.open(req) as resp:
+                status, headers, body = resp.status, resp.headers, resp.read()
+        except urllib.error.HTTPError as err:
+            status, headers, body = err.code, err.headers, err.read()
+        for value in headers.get_all("Set-Cookie") or []:
+            name, _, rest = value.partition("=")
+            val = rest.split(";", 1)[0]
+            if "Max-Age=0" in value or not val:
+                self.cookies.pop(name.strip(), None)
+            else:
+                self.cookies[name.strip()] = val
+        return status, dict(headers), body
+
+    def get(self, path: str, headers: dict | None = None) -> tuple[int, dict, bytes]:
+        return self._send(urllib.request.Request(self.url(path), headers=headers or {}))
+
+    def post(self, path: str, form: dict, headers: dict | None = None) -> tuple[int, dict, bytes]:
+        data = urllib.parse.urlencode(form).encode()
+        req = urllib.request.Request(
+            self.url(path),
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded", **(headers or {})},
+        )
+        return self._send(req)
+
+    def last_link(self) -> str:
+        """The first http(s) URL in the most recent captured mail."""
+        text = self.mailer.sent[-1]["text"]
+        for token in text.split():
+            if token.startswith("http://") or token.startswith("https://"):
+                return token
+        raise AssertionError("no link in the last mail")
+
+    def csrf(self) -> str:
+        """The CSRF token of the current session, read from the dashboard form."""
+        status, _headers, body = self.get("/")
+        assert status == 200, status
+        marker = b'name="csrf" value="'
+        start = body.index(marker) + len(marker)
+        return body[start : body.index(b'"', start)].decode()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None

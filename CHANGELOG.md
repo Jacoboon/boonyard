@@ -10,6 +10,14 @@ bump means a schema rollover, never a marketing decision.
 ## [Unreleased]
 
 ### Repo, not the package
+- **The signup platform** — `saas/` slice 2 (`boonyardnn` 0.2.0.dev0): `accounts.py`
+  (`system/users.db`: signup, email verification, sign-in by emailed link *or* password,
+  sessions, founder seats), `web.py` (the app at `boonyard.com/app`: signup → verify →
+  dashboard with create node / mint key shown once / revoke / export; `/app/founders.json`
+  is the public counter the landing page reads; `/app/privacy`), `mailer.py` (AgentMail
+  over `urllib`; `log`/`none` modes), and `serve-web` / `account` / `mail` CLI commands.
+  The first twenty verified signups are founders, free for a year. Nothing under
+  `package/` changed. *(2026-09-07; Professor's order at boonyard #109/#113/#115.)*
 - **The domain is boonyard.com.** Every `boonyardnn.com` in the canon, the roadmap, the
   glossary, the README, SECURITY.md, CLAUDE.md/AGENTS.md and the `saas/` tree is replaced by
   `boonyard.com`; each canon doc carries a dated note; the glossary keeps a `→` redirect. The
