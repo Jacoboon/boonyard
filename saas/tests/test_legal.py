@@ -57,8 +57,7 @@ class LegalServedTests(unittest.TestCase):
             status, headers, body = self.web.get(path)
             self.assertEqual(status, 200, path)
             text = body.decode("utf-8")
-            main = text[text.index("<main>") :]
-            self.assertNotIn("[", main, path)
+            self.assertNotIn("[", text, path)  # the WHOLE served body, stylesheet included
             for h in h2s:
                 self.assertIn(f"<h2>{h}</h2>", text, f"{path}: {h}")
             self.assertIn('href="/app/terms">terms</a>', text)

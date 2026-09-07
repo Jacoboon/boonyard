@@ -125,7 +125,7 @@ code,.key{font-family:var(--mono);font-size:.85em;background:var(--panel);
  padding:1rem 1.25rem;margin-bottom:1rem}
 label{display:block;font-family:var(--mono);font-size:.8rem;color:var(--muted);
  margin:.6rem 0 .2rem}
-input[type=text],input[type=email],input[type=password]{width:100%;padding:.5rem .6rem;
+input{width:100%;padding:.5rem .6rem;
  background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;
  font:inherit}
 button{font-family:var(--mono);font-size:.85rem;padding:.45rem .9rem;margin-top:.7rem;
