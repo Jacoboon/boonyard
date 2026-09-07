@@ -19,7 +19,19 @@ and the front desk around the substrate.
 - **Mailer** — one function, one provider behind it: AgentMail over its REST API
   (`urllib`, no SDK). `log` and `none` modes exist for tests and for a box without a key.
 
-Not here: billing, teams, `_aggregate`, per-key rate limits (Phase 3).
+- **Node browser** (`/app/nodes/{slug}`) — arch 07's single-node view: recent entries,
+  search by text or tag, threads, write an entry from the browser as the human seat,
+  retag with a reason (the audited mutation), export, and tombstone a node with a typed
+  confirmation. There is no entry edit and no entry delete (ADR-0005): "edit" is a reply
+  threaded to the old entry, one click.
+- **Limits** — ADR-0008's per-key rate limits (Free 30 writes / 600 reads per minute,
+  Pro 600 / 6000, burst 10×; 429 + `Retry-After`) and the Free cap of 10,000 entries per
+  node (403 `quota_exceeded`; export or start another node). Founders are Pro for a year.
+- **Backups** — `python -m boonyardnn backup-config --base /etc/boonyard/umbrella.toml`
+  emits the `[nodes]` table the nightly `backup_walls.py` reads: the six walls plus every
+  hosted node, keyed `user__node`, discovered from the registry at run time.
+
+Not here: billing, teams, `_aggregate` (Phase 3).
 
 ## The one rule
 

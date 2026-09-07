@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boonyardnn"
-# Dev marker, no tag: 0.1 = slice 1 (provisioner + router), 0.2 = slice 2 (accounts + web app).
-version = "0.2.0.dev0"
+# Dev marker, no tag: 0.1 = slice 1 (provisioner + router), 0.2 = slice 2 (accounts + web app), 0.3 = slice 3 (node browser, limits, backups).
+version = "0.3.0.dev0"
 description = "The hosted layer for boonyard: provisioning, the path router, signup and the dashboard."
 readme = "README.md"
 requires-python = ">=3.11"

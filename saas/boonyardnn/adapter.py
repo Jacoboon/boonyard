@@ -18,6 +18,7 @@ than copying it. Making them public is a 3.3.0 conversation, not a slice-1 edit
 (no changes under ``package/`` in this order).
 """
 
+import json
 from pathlib import Path
 
 import boonyard
@@ -26,6 +27,7 @@ from boonyard.export import export_bundle, import_bundle
 from boonyard.mcp import _JSONRPC_CODE, TOOL_DEFS, MCPServer, _jsonrpc_error
 from boonyard.profile import load_profile
 from boonyard.query import node_info
+from boonyard.retag import retag_entry
 
 
 def package_version() -> str:
@@ -119,6 +121,56 @@ def make_server(
         api_key=None,
         meter_path=meter_path,
     )
+
+
+def call_tool(server: MCPServer, name: str, **arguments) -> dict | list:
+    """Call one MCP tool in-process and return its JSON payload (the node browser's engine).
+
+    The same ``MCPServer.handle()`` the router runs per request, without HTTP.
+    ``None`` arguments are dropped. A tool error (validation, not found, …) raises
+    :class:`ToolError` with the tool's own message.
+
+    Example:
+        call_tool(server, "recent", limit=5)
+    """
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": {k: v for k, v in arguments.items() if v is not None},
+        },
+    }
+    response = server.handle(request) or {}
+    if "error" in response:
+        err = response["error"]
+        raise ToolError(
+            str(err.get("message", "tool error")), kind=(err.get("data") or {}).get("error")
+        )
+    result = response.get("result") or {}
+    content = result.get("content") or [{}]
+    text = content[0].get("text", "")
+    if result.get("isError"):
+        raise ToolError(text or "tool error")
+    return json.loads(text) if text else {}
+
+
+class ToolError(RuntimeError):
+    """A tool refused the call; ``message`` is the package's own wording."""
+
+    def __init__(self, message: str, *, kind: str | None = None):
+        super().__init__(message)
+        self.kind = kind
+
+
+def retag(db_path: str | Path, entry_id: int, new_tags: str | None, reason: str, actor: str) -> int:
+    """The package's audited retag (ADR-0005's one mutation); returns the ``meta_log`` id.
+
+    Example:
+        retag("…/journal.db", 12, "decision, boonyard", "wrong namespace", "jacoboon")
+    """
+    return retag_entry(entry_id, new_tags, reason, actor, db_path=db_path)
 
 
 def tool_names() -> list[str]:

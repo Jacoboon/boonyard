@@ -57,8 +57,8 @@ class TmpRoot:
 class ServedRouter:
     """Start a router on an ephemeral port in a daemon thread; stop on exit."""
 
-    def __init__(self, registry: Registry):
-        self.router = Router(registry)
+    def __init__(self, registry: Registry, *, router: Router | None = None):
+        self.router = router or Router(registry)
         self.httpd = make_httpd(self.router, host="127.0.0.1", port=0)
         self.port = self.httpd.server_address[1]
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)

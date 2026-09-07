@@ -10,6 +10,17 @@ bump means a schema rollover, never a marketing decision.
 ## [Unreleased]
 
 ### Repo, not the package
+- **The node browser, limits and backups** — `saas/` slice 3 (`boonyardnn` 0.3.0.dev0):
+  `browser.py` (the dashboard's single-node view at `/app/nodes/{slug}`: recent, search by
+  text or tag, threads, write an entry as the human seat, retag with a reason, export,
+  tombstone a node with typed confirmation — no entry edit, no entry delete, per
+  ADR-0005); ADR-0008's per-key rate limits in the router (Free 30 writes / 600 reads per
+  minute, Pro 600 / 6000, burst 10×; HTTP 429 + `Retry-After`); the Free 10,000-entries-
+  per-node cap on the write path (`quota_exceeded`); `Registry.remove_node` (tombstone +
+  key revocation), `set_plan` (the account's plan mirrored for the router), and
+  `boonyardnn backup-config`, which emits the `[nodes]` table the nightly `backup_walls.py`
+  reads so every hosted node is bundled and restore-proven without a config edit
+  (umbrella #339). *(2026-09-07; boonyard #118/#119.)*
 - **The signup platform** — `saas/` slice 2 (`boonyardnn` 0.2.0.dev0): `accounts.py`
   (`system/users.db`: signup, email verification, sign-in by emailed link *or* password,
   sessions, founder seats), `web.py` (the app at `boonyard.com/app`: signup → verify →

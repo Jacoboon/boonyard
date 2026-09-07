@@ -55,7 +55,12 @@ class _Session(NamedTuple):
     csrf: str
 
 
+_BROWSER_HEADS = frozenset({"entries", "search", "delete"})
+
 _FLASH = {
+    "node-removed": "Node tombstoned. Its keys are revoked; nothing was destroyed.",
+    "entry-written": "Entry written.",
+    "retagged": "Tags replaced; the change is in the node's meta_log.",
     "node-created": "Node created. Mint a key to connect a seat to it.",
     "key-revoked": "Key revoked. Any seat using it is now refused.",
     "password-set": "Password saved. You can sign in with it or with an emailed link.",
@@ -209,6 +214,10 @@ class WebApp:
         if head == "nodes":
             if len(parts) == 1:
                 return self.create_node(req) if post else self._method_not_allowed("POST")
+            if len(parts) == 2 or parts[2] in _BROWSER_HEADS:
+                from .browser import dispatch  # the node browser: read, write, retag, tombstone
+
+                return dispatch(self, req, parts[1], parts[2:])
             if len(parts) == 3 and parts[2] == "keys" and post:
                 return self.mint_key(req, parts[1])
             if len(parts) == 3 and parts[2] == "export" and get:
@@ -273,6 +282,11 @@ class WebApp:
         if self.secure_cookies:
             parts.append("Secure")
         return "Set-Cookie", "; ".join(parts)
+
+    @staticmethod
+    def _flash_text(req: Request) -> str:
+        """The one-line notice a redirect asked for (``?m=<code>``), or ""."""
+        return _FLASH.get(req.query.get("m", ""), "")
 
     def _link(self, path: str, token: str) -> str:
         return f"{self.web_base}{PREFIX}{path}?{urlencode({'t': token})}"
@@ -415,6 +429,7 @@ class WebApp:
         if self.registry.get_user(account.slug) is None:
             try:
                 provisioner.add_user(self.registry, account.slug, account.email)
+                provisioner.set_plan(self.registry, account.slug, account.plan)
             except RegistryError as exc:
                 print(f"boonyardnn: provisioning failed: {type(exc).__name__}", file=sys.stderr)
                 return self._page(
@@ -578,6 +593,7 @@ class WebApp:
         return (
             f'<div class="panel"><b><code>{_esc(node.slug)}</code></b> '
             f'<span class="muted">created {_esc(_date(node.created_at))}</span>'
+            f' · <a href="{PREFIX}/nodes/{_esc(node.slug)}">open</a>'
             f'<p style="margin-top:.5rem">MCP URL: <code>{_esc(url)}</code><br>'
             '<span class="muted">In a connector dialog: that URL, transport Streamable HTTP, '
             "authentication none, and a request header "

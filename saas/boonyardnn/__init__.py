@@ -11,10 +11,14 @@
   (signup → verify → dashboard: create node, mint key shown once, revoke, export)
   — Professor's order, boonyard #109/#113/#115; the pages are forms over the
   provisioner;
-* a **mailer** with one provider behind one function (AgentMail).
+* a **mailer** with one provider behind one function (AgentMail);
+* the **node browser** at ``/app/nodes/{slug}`` (arch 07's single-node view: read,
+  write as the human seat, retag, export, tombstone a node — never edit or delete
+  an entry), ADR-0008's per-key **rate limits** and the Free **entry cap** in the
+  router, and ``backup-config`` so hosted nodes ride the nightly backup.
 
-No billing, no ``_aggregate``, no per-key rate limits — Phase 3. ``adapter.py`` is
+No billing, no ``_aggregate``, no teams — Phase 3. ``adapter.py`` is
 the only module that imports ``boonyard``.
 """
 
-__version__ = "0.2.0.dev0"
+__version__ = "0.3.0.dev0"

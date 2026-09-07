@@ -45,7 +45,17 @@ class HelpTests(unittest.TestCase):
         top = self._subcommands(parser)
         self.assertEqual(
             set(top),
-            {"user", "node", "key", "export", "serve", "serve-web", "account", "mail"},
+            {
+                "user",
+                "node",
+                "key",
+                "export",
+                "serve",
+                "serve-web",
+                "account",
+                "mail",
+                "backup-config",
+            },
         )
         for name, sub in top.items():
             self.assertEqual(_help_exit_code([name, "--help"]), 0, name)

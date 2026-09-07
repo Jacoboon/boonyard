@@ -26,6 +26,7 @@ there is a dashboard to need one.
 
 import json
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,52 @@ DEFAULT_PORT = 8800
 # is request/response only, so the suffix carries no meaning — but it must not
 # 404 someone who typed the URL as the ADR wrote it.
 _TRANSPORT_SUFFIXES = frozenset({"sse", "http"})
+
+# ADR-0008 §Rate limits: per-key, per minute, burst 10×. "The free-tier limits exist
+# primarily to protect the SaaS from runaway agent loops, not to throttle reasonable use."
+WRITE_TOOLS = frozenset({"log_entry", "log_skill_revision"})
+RATE_LIMITS: dict[str, tuple[int, int]] = {"free": (30, 600), "pro": (600, 6000)}  # (writes, reads)
+BURST = 10
+PRO_PLANS = frozenset({"founder", "owner", "pro", "team"})
+# ADR-0007 / arch 07: Free = 10,000 entries per node, a HARD quota — refuses new writes,
+# never deletes (ADR-0005). Storage caps stay soft for now.
+FREE_ENTRY_CAP = 10_000
+
+
+def tier_of(plan: str | None) -> str:
+    """``"pro"`` for founder/owner/pro/team, else ``"free"``."""
+    return "pro" if plan in PRO_PLANS else "free"
+
+
+class RateLimiter:
+    """Token buckets per ``(key_id, kind)``; in-process, which is the deployment (one router).
+
+    ``take`` returns 0 when the call may proceed, else the seconds to wait. Capacity is
+    ``rate × burst``; refill is continuous at ``rate`` per minute.
+
+    Example:
+        rl = RateLimiter(); rl.take("k1", "write", 30)  # -> 0
+    """
+
+    def __init__(self, *, burst: int = BURST, clock: Callable[[], float] = time.monotonic):
+        self._burst = burst
+        self._clock = clock
+        self._buckets: dict[tuple[str, str], tuple[float, float]] = {}  # (tokens, at)
+        self._lock = threading.Lock()
+
+    def take(self, key_id: str, kind: str, rate_per_minute: int) -> int:
+        capacity = float(rate_per_minute * self._burst)
+        refill = rate_per_minute / 60.0
+        now = self._clock()
+        with self._lock:
+            tokens, at = self._buckets.get((key_id, kind), (capacity, now))
+            tokens = min(capacity, tokens + (now - at) * refill)
+            if tokens >= 1.0:
+                self._buckets[(key_id, kind)] = (tokens - 1.0, now)
+                return 0
+            self._buckets[(key_id, kind)] = (tokens, now)
+            return max(1, int((1.0 - tokens) / refill + 0.999))
+
 
 # (status, JSON body or None, extra headers)
 Response = tuple[int, dict | None, dict[str, str]]
@@ -66,10 +113,21 @@ class Router:
             "Bearer bnyk_…"}, b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
     """
 
-    def __init__(self, registry: Registry, *, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        registry: Registry,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        limits: dict[str, tuple[int, int]] | None = None,
+        burst: int = BURST,
+        entry_cap: int = FREE_ENTRY_CAP,
+    ):
         self._registry = registry
         self._clock = clock
         self._started = clock()
+        self._limits = dict(RATE_LIMITS if limits is None else limits)
+        self._limiter = RateLimiter(burst=burst, clock=clock)
+        self._entry_cap = entry_cap
 
     # -- path -----------------------------------------------------------------
     @staticmethod
@@ -169,7 +227,31 @@ class Router:
         if not isinstance(request, dict):
             return self._error(400, "validation", "parse error", code=-32700)
 
+        # ADR-0008 rate limits (per key, per kind) and ADR-0007's hard Free quota.
+        tool = ""
+        if request.get("method") == "tools/call":
+            tool = str((request.get("params") or {}).get("name") or "")
+        kind = "write" if tool in WRITE_TOOLS else "read"
+        tier = tier_of(user.plan)
+        writes, reads = self._limits.get(tier, self._limits["free"])
+        wait = self._limiter.take(key.key_id, kind, writes if kind == "write" else reads)
+        if wait:
+            status, payload, _ = self._error(
+                429,
+                "rate_limited",
+                f"rate limit: {tier} tier allows {writes} writes and "
+                f"{reads} reads per minute per key; retry in {wait}s",
+            )
+            return status, payload, {"Retry-After": str(wait)}
         node_dir = self._registry.node_dir(user, node)
+        if kind == "write" and tier == "free" and self._entry_cap is not None:
+            if adapter.entry_count(node_dir / "journal.db") >= self._entry_cap:
+                return self._error(
+                    403,
+                    "quota_exceeded",
+                    f"the free plan holds {self._entry_cap} entries per "
+                    "node; export the node, or start another",
+                )
         server = adapter.make_server(
             node_dir / "journal.db",
             profile_path=node_dir / "boonyard.toml",

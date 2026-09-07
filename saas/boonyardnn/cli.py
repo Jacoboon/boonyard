@@ -104,6 +104,10 @@ def cmd_user(args) -> int:
             ["slug", "user_id", "plan", "status", "created_at", "email"],
         )
         return EXIT_OK
+    if args.user_cmd == "plan":
+        user = provisioner.set_plan(reg, args.slug, args.plan)
+        print(f"{user.slug}: plan {user.plan}")
+        return EXIT_OK
     return EXIT_USAGE
 
 
@@ -127,6 +131,11 @@ def cmd_node(args) -> int:
             [[n.slug, n.node_id, n.created_at, n.storage_path] for n in nodes],
             ["slug", "node_id", "created_at", "storage_path"],
         )
+        return EXIT_OK
+    if args.node_cmd == "remove":
+        grave = provisioner.remove_node(reg, args.user, args.node)
+        print(f"tombstoned {args.user}/{args.node} -> {grave.relative_to(reg.root).as_posix()}")
+        print("  keys scoped to it are revoked; nothing was destroyed (purge is a separate act)")
         return EXIT_OK
     return EXIT_USAGE
 
@@ -256,6 +265,7 @@ def cmd_account(args) -> int:
         if reg.get_user(args.slug) is None:
             raise NotFoundError(f"no registry user {args.slug!r} — import is for provisioned users")
         account = acc.import_user(args.slug, args.email, plan=args.plan)
+        provisioner.set_plan(reg, args.slug, account.plan)
         print(f"imported {account.slug} as {account.plan} ({account.account_id})")
         return EXIT_OK
     if args.account_cmd == "link":
@@ -268,6 +278,21 @@ def cmd_account(args) -> int:
         print(f"  {_web_base()}{PREFIX}{path}?t={token}")
         return EXIT_OK
     return EXIT_USAGE
+
+
+def cmd_backup_config(args) -> int:
+    reg = _registry(args)
+    text = provisioner.backup_config(reg, args.base)
+    if args.out:
+        out = Path(args.out)
+        tmp = out.with_name(out.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, out)
+        rows = sum(1 for line in text.splitlines() if " = '" in line)
+        print(f"wrote {out} ({rows} nodes)")
+    else:
+        print(text, end="")
+    return EXIT_OK
 
 
 def cmd_mail(args) -> int:
@@ -300,6 +325,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("slug")
     a.add_argument("--email", required=True)
     us.add_parser("list", help="every user")
+    pl = us.add_parser("plan", help="mirror the account's plan into the registry (router tier)")
+    pl.add_argument("slug")
+    pl.add_argument("plan")
     p.set_defaults(func=cmd_user)
 
     p = sub.add_parser("node", help="node add <user> <node> [--profile TOML] | node list <user>")
@@ -310,6 +338,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--profile", help="a boonyard.toml to copy in (default: the starter profile)")
     ls = ns.add_parser("list", help="a user's nodes")
     ls.add_argument("user")
+    rm = ns.add_parser("remove", help="tombstone a node (moved aside, keys revoked; no purge)")
+    rm.add_argument("user")
+    rm.add_argument("node")
     p.set_defaults(func=cmd_node)
 
     p = sub.add_parser("key", help="key add <user> <node> [--label L] | key revoke <id> | key list")
@@ -353,6 +384,13 @@ def build_parser() -> argparse.ArgumentParser:
     ln = acs.add_parser("link", help="print a one-time sign-in/verify link (mailer down)")
     ln.add_argument("email")
     p.set_defaults(func=cmd_account)
+
+    p = sub.add_parser(
+        "backup-config", help="emit the [nodes] table for backup_walls.py: base file + hosted nodes"
+    )
+    p.add_argument("--base", help="a TOML whose [nodes] rows are copied first (the six walls)")
+    p.add_argument("--out", help="write here (atomic) instead of stdout")
+    p.set_defaults(func=cmd_backup_config)
 
     p = sub.add_parser(
         "mail", help="mail test <to> — send one message through the configured sender"

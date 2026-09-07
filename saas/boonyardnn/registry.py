@@ -310,6 +310,37 @@ class Registry:
         """``{root}/users/{user_id}``."""
         return self.users_dir / user.user_id
 
+    def set_plan(self, user: User, plan: str) -> User:
+        """Record the user's plan (``free`` / ``founder`` / ``owner`` …) in ``metadata.json``.
+
+        The accounts store decides the plan; this mirror lets the router read the
+        tier for rate limits and caps without opening ``users.db``.
+
+        Example:
+            reg.set_plan(user, "founder").plan  # -> "founder"
+        """
+        if not isinstance(plan, str) or not plan or len(plan) > 32 or not plan.isidentifier():
+            raise RegistryError(f"plan {plan!r} is not a plan name")
+        with self._lock:
+            meta = self._read_meta(user.user_id)
+            if meta is None:
+                raise NotFoundError(f"no user with id {user.user_id!r}")
+            meta["plan"] = plan
+            self._write_meta(user.user_id, meta)
+        return self._user_from_meta(meta)
+
+    def all_nodes(self) -> list[tuple[User, Node]]:
+        """Every ``(user, node)`` pair in the registry, sorted by user slug then node slug.
+
+        What the backup config is generated from: a new founder's node is covered
+        the night it is created, with no config edit anywhere.
+        """
+        pairs = []
+        for user in self.list_users():
+            for node in self.list_nodes(user):
+                pairs.append((user, node))
+        return pairs
+
     # -- nodes ----------------------------------------------------------------
     def create_node(self, user: User, slug: str, *, init: Callable[[Path], str]) -> Node:
         """Create ``nodes/{slug}/`` (0700) + ``backups/``, run ``init``, record the node.
@@ -376,6 +407,43 @@ class Registry:
     def node_dir(self, user: User, node: Node) -> Path:
         """The node's directory (``journal.db``, ``boonyard.toml``, ``backups/`` live here)."""
         return self.root / node.storage_path
+
+    def remove_node(self, user: User, node: Node) -> Path:
+        """Tombstone a node: move its directory aside, drop its record, revoke its keys.
+
+        Nothing is destroyed. The directory lands under
+        ``{root}/.tombstoned/{user_id}/{stamp}-{slug}/`` (0700), which is arch 05's
+        grace shape for deletion: a purge is a separate, later, human decision. Every
+        key scoped to the node is revoked so no seat can keep writing to a file that
+        the dashboard says is gone. Returns the tombstone path.
+
+        Example:
+            reg.remove_node(user, node)  # -> …/.tombstoned/<id>/20260907T050000Z-n1
+        """
+        with self._lock:
+            meta = self._read_meta(user.user_id)
+            if meta is None or node.slug not in meta["nodes"]:
+                raise NotFoundError(f"no node {node.slug!r} for user {user.slug!r}")
+            src = self.node_dir(user, node)
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            grave = self.root / ".tombstoned" / user.user_id
+            _mkdir_private(self.root / ".tombstoned")
+            _mkdir_private(grave)
+            dest = grave / f"{stamp}-{node.slug}"
+            if src.exists():
+                os.replace(src, dest)
+            else:
+                _mkdir_private(dest)
+            del meta["nodes"][node.slug]
+            self._write_meta(user.user_id, meta)
+            store = self._read_keys(user.user_id)
+            now = _now()
+            scope = f"node:{node.node_id}"
+            for row in store["keys"]:
+                if row["scope"] == scope and row["revoked_at"] is None:
+                    row["revoked_at"] = now
+            self._write_keys(user.user_id, store)
+        return dest
 
     # -- keys -----------------------------------------------------------------
     def create_key(self, user: User, node: Node, *, label: str | None = None) -> tuple[str, ApiKey]:
