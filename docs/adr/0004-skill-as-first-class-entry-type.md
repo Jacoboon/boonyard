@@ -85,6 +85,8 @@ A seat writes a skill when it notices one. There is no autonomous skill-extracti
 
 ## Consequences
 
+> **2026-09-07 — clarification (umbrella #354).** The slug `readme` is reserved by convention for a node's own readme: `log_skill_revision(slug="readme", …)` writes it (tags `readme, instructions, agents`), and the `instructions` tool and `node_info` (`has_readme`, `readme_id`) read it (boonyard #125). Nothing refuses other uses of the slug.
+
 **Positive:**
 - The substrate gets a *third* register beyond events (notes/decisions/discussions/implementations) and arcs (sessions/prompts): procedures. Skills compound across sessions in a way nothing else does.
 - The retrieval rule is one line of API (`recent(entry_type='skill')`), unambiguous, and immune to the tag-pollution problem.

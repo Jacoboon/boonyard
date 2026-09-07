@@ -16,6 +16,8 @@ Per CHARTER ("dogfood pact") and ADR-0006 ("the OSS package is the SaaS"): the S
 
 ### 1. The SaaS web layer exists
 
+> **2026-09-07 — clarification (umbrella #354).** The web layer is the stdlib `http.server`, not Flask, decided by building (umbrella #335 (a)); the tree is `saas/boonyardnn/`, and `adapter.py` is the one module that imports the package.
+
 A Flask (or equivalent, decided at Phase 2 kickoff) application that runs on a DigitalOcean droplet (same shape as JRHood's existing deployment). It is the multi-tenant layer described in `architecture/05_multi_tenancy.md`, sitting on top of the boonyard package described in `architecture/04_distribution.md`.
 
 Structure:
@@ -71,6 +73,8 @@ Per `architecture/05_multi_tenancy.md` and `ADR-0007`:
 Per-user OS-level permissions (mode 0700 on the user directory).
 
 ### 4. Auth — email + password, session-based
+
+> **2026-09-07 — clarification (umbrella #354).** Two sign-in paths shipped: an emailed one-time link, or a password (scrypt), the user's choice (boonyard #113). Verification is by emailed link; the sender is AgentMail, not SendGrid.
 
 - Signup: email + password. bcrypt the password. Send a verification email (Phase 2 uses a simple SMTP send — same SendGrid setup as JRHood's `_send_claim_email`).
 - Login: email + password → session cookie.

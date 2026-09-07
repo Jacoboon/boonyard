@@ -48,6 +48,8 @@ The SaaS layer is allowed external dependencies (ADR-0006); none of the constrai
         sessions.db                    <- auth session tokens
 ```
 
+> **2026-09-07 — clarification (umbrella #354).** `system/users.db` holds the sessions too (accounts, tokens and sessions as three tables in one file); `sessions.db` was not created. Compromise of the one file still leaks accounts, not content.
+
 - `user_id`: opaque UUID, never derived from email or other PII.
 - `node_slug`: user-chosen, URL-safe (`[a-z0-9-]+`), unique within the user's namespace. e.g. `planescape`, `jrhood`, `vectorscape-world-1`.
 - Backups are SQLite online-API backups (atomic, consistent without quiescing writes) named with their UTC timestamp.

@@ -94,6 +94,8 @@ Teams are a Phase 3 feature; pre-Phase-3 the substrate is solo only.
 ### Web (dashboard) authentication
 
 - Email + password (with `bcrypt`).
+
+> **2026-09-07 — clarification (umbrella #354).** The password hash is `hashlib.scrypt` (a slow salted hash from the stdlib; "bcrypt" reads as that intent, not as a dependency), and sign-in has two paths, an emailed one-time link or the password, the user's choice (boonyard #113).
 - Optional OAuth providers (GitHub, Google) added per Phase 3.
 - Sessions are server-side, stored in `system/sessions.db`. Session cookies are HttpOnly, Secure, SameSite=Lax.
 - 2FA (TOTP) optional, recommended for paid accounts.

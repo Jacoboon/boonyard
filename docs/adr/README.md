@@ -16,6 +16,9 @@ Each ADR captures one load-bearing decision with its context, the decision itsel
 | [0008](0008-mcp-routing-and-auth.md) | MCP routing and authentication: per-node endpoints + per-node keys | Accepted |
 | [0009](0009-tag-discipline-and-list-tags.md) | Tag discipline: lowercase-hyphen, singular nouns, list_tags as menu | Accepted |
 | [0010](0010-no-embeddings-yet.md) | No embeddings (yet); if added, optional install only | Accepted |
+| [0011](0011-billing-prices-and-founders.md) | Billing, prices, and the founder→paid transition | Accepted (2026-09-07) |
+| [0012](0012-at-rest-encryption-tiers.md) | At-rest encryption: two tiers, what can truthfully be promised | Accepted (2026-09-07) |
+| [0013](0013-derived-views.md) | Derived views: ghosts, arcs, read heat, panel — derived, never declared | Accepted (2026-09-07) |
 
 ## Writing a new ADR
 
