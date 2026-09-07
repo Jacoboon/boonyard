@@ -68,6 +68,8 @@ class ToolSurfaceTests(unittest.TestCase):
             "list_nodes",
             "node_info",
             "audit_doctor",
+            "instructions",
+            "ghosts",
         }
         self.assertEqual(names, expected)
 

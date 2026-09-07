@@ -51,11 +51,11 @@ class RouterHttpTestCase(unittest.TestCase):
 
 
 class ToolSurfaceTests(RouterHttpTestCase):
-    def test_tools_list_is_the_packages_18_tools(self):
+    def test_tools_list_is_the_packages_tools(self):
         status, body, _ = self.served.post("/alice/n1", rpc("tools/list"), self.bearer())
         self.assertEqual(status, 200)
         names = sorted(t["name"] for t in body["result"]["tools"])
-        self.assertEqual(len(names), 18)
+        self.assertEqual(len(names), 20)  # 18 at 3.2.0; instructions + ghosts at 3.3.0
         self.assertEqual(names, sorted(adapter.tool_names()))
         self.assertNotIn("retag", names)
 

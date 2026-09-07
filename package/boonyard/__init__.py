@@ -13,7 +13,7 @@ from .db import connect, init_db, reindex, schema_version
 from .export import export_bundle, import_bundle
 from .log import log_entry, log_skill_revision, validate_entry
 from .mcp import MCPServer, serve
-from .meter import read_stats
+from .meter import entry_heat, read_stats
 from .profile import (
     Profile,
     default_profile,
@@ -38,8 +38,9 @@ from .query import (
     upcoming_dates,
 )
 from .retag import retag_entry
+from .views import ghosts
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -53,8 +54,10 @@ __all__ = [
     "by_id",
     "connect",
     "default_profile",
+    "entry_heat",
     "export_bundle",
     "get_thread",
+    "ghosts",
     "import_bundle",
     "init_db",
     "latest_skill",

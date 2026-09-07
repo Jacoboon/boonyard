@@ -271,7 +271,54 @@ def _print_stats(result: dict) -> None:
 
 
 def cmd_meter(args) -> int:
+    if getattr(args, "meter_cmd", None) == "rollup":
+        from .meter import rollup
+
+        result = rollup(default_meter_path(_db(args)), args.older_than_days)
+        print(
+            f"rolled up {result['moved']} read hit(s) on {result['entries']} entr(ies) "
+            f"older than {result['cutoff']}"
+        )
+        return EXIT_OK
     _print_stats(_read_stats(args.within, meter_path=default_meter_path(_db(args))))
+    return EXIT_OK
+
+
+def cmd_instructions(args) -> int:
+    from .instructions import instructions_text
+    from .query import latest_skill
+
+    print(instructions_text(), end="")
+    if args.db:
+        readme = latest_skill("readme", db_path=_db(args))
+        if readme is not None:
+            print()
+            print(f"--- this node's readme (entry #{readme['id']}, {readme['timestamp']}) ---")
+            print(readme["content"])
+    return EXIT_OK
+
+
+def cmd_ghosts(args) -> int:
+    from .views import ghosts
+
+    rows = ghosts(
+        args.limit,
+        args.older_than_days,
+        db_path=_db(args),
+        meter_path=default_meter_path(_db(args)),
+    )
+    if not rows:
+        print("(no ghosts)")
+        return EXIT_OK
+    for g in rows:
+        tags = ",".join(g["tags"]) if g["tags"] else "-"
+        last = g["last_read"] or "never"
+        print(
+            f"#{g['id']}  {g['timestamp']}  {g['agent']}/{g['entry_type']}  "
+            f"reads={g['reads']} last_read={last}  [{tags}]"
+        )
+        print(f"    {g['first_line']}")
+    print(f"{len(rows)} ghost(s)")
     return EXIT_OK
 
 
@@ -516,7 +563,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_skill)
 
     sub.add_parser("doctor", help="self-audit").set_defaults(func=cmd_doctor)
+    p = sub.add_parser("instructions", help="the package readme a model gets at initialize")
+    p.set_defaults(func=cmd_instructions)
+
+    p = sub.add_parser("ghosts", help="root entries nobody threaded to or read (ADR-0013)")
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--older-than-days", type=int, default=30, help="window (default 30)")
+    p.set_defaults(func=cmd_ghosts)
+
     p = sub.add_parser("meter", help="read-vs-write traffic from the meter sidecar")
+    ms = p.add_subparsers(dest="meter_cmd", required=False)
+    mr = ms.add_parser("rollup", help="fold read hits older than the window into counts")
+    mr.add_argument("--older-than-days", type=int, default=180, help="window (default 180)")
     p.add_argument("--within", type=int, default=7, help="window in days (default 7)")
     p.set_defaults(func=cmd_meter)
 

@@ -28,6 +28,7 @@ If the file cannot be opened, the read it was measuring still gets served.
 """
 
 import sqlite3
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -47,6 +48,21 @@ CREATE TABLE IF NOT EXISTS meter (
 );
 CREATE INDEX IF NOT EXISTS idx_meter_ts   ON meter(ts);
 CREATE INDEX IF NOT EXISTS idx_meter_kind ON meter(kind);
+CREATE TABLE IF NOT EXISTS read_hit (
+    ts       TEXT NOT NULL,
+    tool     TEXT NOT NULL,
+    node     TEXT,
+    entry_id INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_read_hit_node_entry ON read_hit(node, entry_id);
+CREATE INDEX IF NOT EXISTS idx_read_hit_ts         ON read_hit(ts);
+CREATE TABLE IF NOT EXISTS read_hit_rollup (
+    node      TEXT NOT NULL DEFAULT '',
+    entry_id  INTEGER NOT NULL,
+    reads     INTEGER NOT NULL,
+    last_read TEXT,
+    PRIMARY KEY (node, entry_id)
+);
 """
 
 
@@ -111,6 +127,133 @@ def record(
         return True
     except Exception:  # noqa: BLE001 — a broken meter must never break a read
         return False
+
+
+def record_hits(
+    meter_path: str | Path | None,
+    tool: str,
+    *,
+    node: str | None = None,
+    entry_ids: Iterable[int],
+    ts: str | None = None,
+) -> int:
+    """Record the entry ids a READ returned (ADR-0013 §2a read heat). Returns rows written.
+
+    **Never raises** — the same contract as :func:`record`, for the same reason: a
+    hook on the read path must not be able to break the read. **Never the query,
+    never the arguments, never the caller**: one row per id, with the tool name, the
+    node and a local timestamp. An empty list writes nothing and returns 0.
+
+    Example:
+        record_hits("node/meter.db", "recent", node="umbrella", entry_ids=[12, 11, 10])
+    """
+    if meter_path is None:
+        return 0
+    try:
+        ids = [int(i) for i in entry_ids if i is not None]
+        if not ids:
+            return 0
+        stamp = ts or datetime.now().isoformat(timespec="seconds")
+        conn = _connect(meter_path)
+        try:
+            conn.executemany(
+                "INSERT INTO read_hit (ts, tool, node, entry_id) VALUES (?, ?, ?, ?)",
+                [(stamp, tool, node, i) for i in ids],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return len(ids)
+    except Exception:  # noqa: BLE001 — a broken meter must never break a read
+        return 0
+
+
+def entry_heat(
+    meter_path: str | Path | None,
+    *,
+    node: str | None = None,
+    entry_ids: Iterable[int] | None = None,
+) -> dict[int, dict]:
+    """``{entry_id: {"reads": n, "last_read": ts | None}}`` from raw hits plus roll-ups.
+
+    Read-only and fail-soft: an absent or unreadable sidecar yields ``{}``. ``node``
+    narrows to one node's rows (an aggregator meter holds several); ``entry_ids``
+    narrows to a set of ids. Ids with no reads are simply absent.
+
+    Example:
+        entry_heat("node/meter.db", entry_ids=[12])  # -> {12: {"reads": 3, "last_read": "…"}}
+    """
+    if meter_path is None or not Path(meter_path).exists():
+        return {}
+    wanted = None if entry_ids is None else {int(i) for i in entry_ids}
+    heat: dict[int, dict] = {}
+
+    def fold(eid: int, reads: int, last: str | None) -> None:
+        if wanted is not None and eid not in wanted:
+            return
+        cur = heat.setdefault(eid, {"reads": 0, "last_read": None})
+        cur["reads"] += int(reads)
+        if last and (cur["last_read"] is None or last > cur["last_read"]):
+            cur["last_read"] = last
+
+    try:
+        conn = sqlite3.connect(f"file:{Path(meter_path).as_posix()}?mode=ro", uri=True)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only = ON")
+            where, params = ("WHERE node = ?", (node,)) if node is not None else ("", ())
+            for r in conn.execute(
+                f"SELECT entry_id, COUNT(*) AS n, MAX(ts) AS last FROM read_hit {where} "
+                "GROUP BY entry_id",
+                params,
+            ):
+                fold(r["entry_id"], r["n"], r["last"])
+            for r in conn.execute(
+                f"SELECT entry_id, reads, last_read FROM read_hit_rollup {where}", params
+            ):
+                fold(r["entry_id"], r["reads"], r["last_read"])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    return heat
+
+
+def rollup(meter_path: str | Path, older_than_days: int = 180, *, today=None) -> dict:
+    """Fold raw ``read_hit`` rows older than the window into ``read_hit_rollup``; delete them.
+
+    Sidecar rows are telemetry, not entries — deleting them is outside ADR-0005. The
+    counts survive (per node and entry: total reads, newest read); only the per-hit
+    rows go. Returns ``{"moved": raw rows removed, "entries": distinct ids folded,
+    "cutoff": date}``.
+
+    Example:
+        rollup("node/meter.db")  # -> {"moved": 4120, "entries": 388, "cutoff": "2026-03-11"}
+    """
+    day = _coerce_today(today)
+    cutoff = (day - timedelta(days=max(int(older_than_days), 0))).isoformat()
+    conn = _connect(meter_path)
+    try:
+        old = conn.execute(
+            "SELECT COALESCE(node, '') AS node, entry_id, COUNT(*) AS n, MAX(ts) AS last "
+            "FROM read_hit WHERE substr(ts, 1, 10) < ? GROUP BY COALESCE(node, ''), entry_id",
+            (cutoff,),
+        ).fetchall()
+        moved = 0
+        for r in old:
+            conn.execute(
+                "INSERT INTO read_hit_rollup (node, entry_id, reads, last_read) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(node, entry_id) DO UPDATE SET "
+                "reads = reads + excluded.reads, "
+                "last_read = MAX(COALESCE(last_read, ''), COALESCE(excluded.last_read, ''))",
+                (r["node"], r["entry_id"], r["n"], r["last"]),
+            )
+            moved += r["n"]
+        conn.execute("DELETE FROM read_hit WHERE substr(ts, 1, 10) < ?", (cutoff,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"moved": moved, "entries": len(old), "cutoff": cutoff}
 
 
 def _empty_stats(within_days: int, since: date, until: date, warnings: list[dict]) -> dict:

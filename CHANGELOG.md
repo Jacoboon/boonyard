@@ -10,6 +10,48 @@ bump means a schema rollover, never a marketing decision.
 ## [Unreleased]
 
 ### Repo, not the package
+- **The legal pages, served** — `saas/boonyardnn/legal.py`: `/app/terms` (new) and
+  `/app/privacy` (the full blessed policy; the three-heading page it replaces was its §1/§4/§7
+  in short). Every bracket in `docs/legal/*.md` resolved from the running system; the served
+  bodies contain no `[`. Footer and signup form link both. *(2026-09-07; umbrella #361/#364.)*
+
+## [3.3.0] — 2026-09-07
+
+Three additions, no change to the `entry` table (ADR-0002/0005): a node made before this
+release and one made after are identical the moment they upgrade (umbrella #362).
+
+### Added
+- **`instructions` — the package readme, one static call away.** `boonyard.instructions`
+  builds a ≤ 3,500-byte readme for a model (what a node is; the read law; the write
+  conventions; the registers; skills; one line per tool, assembled from `TOOL_DEFS`); the MCP
+  `initialize` result carries it as the spec's `instructions` string, so a client that
+  honours it hands the text to the model on every connect. Tool `instructions(scope?)` →
+  `{package, version, readme}` where `readme` is the node's own readme: the newest revision of
+  the skill with the reserved slug `readme` (ADR-0004 clarification). `node_info` gains
+  `has_readme` / `readme_id`. CLI `boonyard instructions` (with `--db`, appends the readme).
+  The machinery test: every `_TOOL_NAMES` entry must appear in the text — a tool added without
+  a readme line fails CI. *(Professor's idea, boonyard #125; ADR-0013 §adjacent.)*
+- **Read heat — the sidecar (ADR-0013 §2a).** `meter.db` gains `read_hit(ts, tool, node,
+  entry_id)`: one row per entry id a READ returned, written by a separate hook AFTER dispatch
+  (`record_hits`, cannot raise; never the query, never the caller — `record()` keeps its
+  no-arguments contract). `entry_heat()` → `{id: {reads, last_read}}`; `rollup()` folds rows
+  older than 180 days into `read_hit_rollup` counts; CLI `boonyard meter rollup`. In aggregator
+  mode hits are attributed per row by its `source` node.
+- **`ghosts` — the orphan sweep, derived (ADR-0013 §2b).** `views.ghosts(limit=20,
+  older_than_days=30)`: root entries (`related_id IS NULL`, not `meta`) with no children, older
+  than the window, and no read inside it, coldest first; rows of `{id, timestamp, agent,
+  entry_type, first_line, tags, reads, last_read}`. Tool and CLI `boonyard ghosts`. The dated
+  half of the sweep stays `upcoming_dates(prefix="open")`.
+- The MCP server exposes **20 tools** (was 18); additive, hence a minor bump (architecture 06).
+
+### Tests
+Package: the machinery test (a tool name deleted from the readme → red), the hook test (hook
+removed → `by_id` writes no `read_hit` → red), `get_thread` records root + children, a write
+records nothing, the `ghosts` fixture (unthreaded-unread listed; with-child not; read not),
+`rollup` moves exactly the old rows. Shown red first, then green; full suite green; `ruff`
+clean. Versions in both files (`pyproject.toml`, `__init__.py`) read 3.3.0.
+
+### Repo, not the package (carried)
 - **The node browser, limits and backups** — `saas/` slice 3 (`boonyardnn` 0.3.0.dev0):
   `browser.py` (the dashboard's single-node view at `/app/nodes/{slug}`: recent, search by
   text or tag, threads, write an entry as the human seat, retag with a reason, export,

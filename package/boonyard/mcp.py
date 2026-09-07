@@ -22,7 +22,7 @@ import hmac
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import meter, query
+from . import meter, query, views
 from .constants import DEFAULT_MCP_PORT
 from .log import log_entry, log_skill_revision
 from .query import search_by_tag_exact
@@ -181,6 +181,26 @@ TOOL_DEFS: list[dict] = [
     _tool("list_nodes", "Configured nodes + metadata.", {}, []),
     _tool("node_info", "Full node metadata.", {"scope": _STR}, []),
     _tool("audit_doctor", "The substrate self-audit.", {"scope": _STR}, []),
+    _tool(
+        "instructions",
+        "How to use this node: the package readme (read law, write conventions, "
+        "registers, skills, every tool) plus this node's own readme if one was written "
+        "(the skill with slug 'readme'). Returns {package, version, readme}.",
+        {"scope": _STR},
+        [],
+    ),
+    _tool(
+        "ghosts",
+        "The orphan sweep, derived (ADR-0013): root entries nobody threaded to and "
+        "nobody read in the window, coldest first. Returns rows of "
+        "{id, timestamp, agent, entry_type, first_line, tags, reads, last_read}.",
+        {
+            "limit": _INT,
+            "older_than_days": {**_INT, "description": "window in days (default 30)"},
+            "scope": _STR,
+        },
+        [],
+    ),
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOL_DEFS}
@@ -251,6 +271,8 @@ class MCPServer:
             return None
         try:
             if method == "initialize":
+                from .instructions import instructions_text  # lazy: instructions imports mcp
+
                 result = {
                     "protocolVersion": _PROTOCOL_VERSION,
                     "capabilities": {"tools": {}},
@@ -258,6 +280,8 @@ class MCPServer:
                         "name": "boonyard",
                         "version": __import__("boonyard").__version__,
                     },
+                    # The package readme, handed to the model on every connect (boonyard #125).
+                    "instructions": instructions_text(),
                 }
             elif method == "tools/list":
                 result = {"tools": TOOL_DEFS}
@@ -333,8 +357,62 @@ class MCPServer:
         # and record() cannot raise, so this can never break the call below.
         self._meter(name, args)
         if self._agg is not None:
-            return self._call_aggregator(name, args)
-        return self._call_single(name, args)
+            payload = self._call_aggregator(name, args)
+        else:
+            payload = self._call_single(name, args)
+        # Read heat (ADR-0013 §2a): a SEPARATE hook, AFTER dispatch, on the ids the read
+        # RETURNED — never the query, never the caller. record_hits() cannot raise and
+        # this wrapper cannot either, so a broken sidecar never breaks a read.
+        try:
+            self._hits(name, args, payload)
+        except Exception:  # noqa: BLE001 — telemetry must not break the read it measures
+            pass
+        return payload
+
+    # -- read heat ---------------------------------------------------------
+    @staticmethod
+    def _returned_ids(name: str, payload) -> list[tuple[str | None, int]]:
+        """(source-or-None, entry_id) pairs a READ tool returned; [] for everything else."""
+        if payload is None:
+            return []
+        if name in ("recent", "search_text", "search_by_tag", "search_by_tag_exact", "get_thread"):
+            return [
+                (e.get("source"), e["id"]) for e in payload if isinstance(e, dict) and "id" in e
+            ]
+        if name == "list_skills":
+            return [
+                (s["latest"].get("source"), s["latest"]["id"])
+                for s in payload
+                if isinstance(s, dict) and isinstance(s.get("latest"), dict)
+            ]
+        if name in ("by_id", "latest_skill"):
+            return [(payload.get("source"), payload["id"])] if isinstance(payload, dict) else []
+        if name == "upcoming_dates":
+            return [
+                (d.get("node"), d["entry_id"])
+                for d in payload.get("dates", [])
+                if isinstance(d, dict) and d.get("entry_id") is not None
+            ]
+        if name == "instructions":
+            readme = payload.get("readme") if isinstance(payload, dict) else None
+            return [(readme.get("source"), readme["id"])] if isinstance(readme, dict) else []
+        return []
+
+    def _hits(self, name: str, args: dict, payload) -> None:
+        """Record the ids a read returned.
+
+        Aggregator rows carry ``source`` (their node), so hits are attributed per row;
+        a row without one falls back to the scope string, exactly as ``_meter_node``.
+        """
+        pairs = self._returned_ids(name, payload)
+        if not pairs:
+            return
+        default_node = self._meter_node(args)
+        by_node: dict[str | None, list[int]] = {}
+        for source, eid in pairs:
+            by_node.setdefault(source if source is not None else default_node, []).append(eid)
+        for node, ids in by_node.items():
+            meter.record_hits(self._meter_path, name, node=node, entry_ids=ids)
 
     def _call_single(self, name, args: dict):
         db = self._db
@@ -397,6 +475,21 @@ class MCPServer:
             return query.node_info(db_path=db, profile=self._profile)
         if name == "audit_doctor":
             return query.audit_doctor(db_path=db, profile=self._profile)
+        if name == "instructions":
+            from .instructions import instructions_text
+
+            return {
+                "package": instructions_text(),
+                "version": __import__("boonyard").__version__,
+                "readme": query.latest_skill("readme", db_path=db),
+            }
+        if name == "ghosts":
+            return views.ghosts(
+                int(args.get("limit") or 20),
+                int(args.get("older_than_days") or 30),
+                db_path=db,
+                meter_path=self._meter_path,
+            )
         if name == "list_nodes":
             info = query.node_info(db_path=db, profile=self._profile)
             return [
@@ -441,6 +534,17 @@ class MCPServer:
             return agg.read_stats(scope=scope, **_stats_args(args))
         if name == "list_nodes":
             return agg.list_nodes()
+        if name == "instructions":
+            # Like node_info, a readme is a per-node thing: the aggregator serves the
+            # package half and points at the node's own endpoint for the rest.
+            from .instructions import instructions_text
+
+            return {
+                "package": instructions_text(),
+                "version": __import__("boonyard").__version__,
+                "readme": None,
+                "note": "aggregator endpoint: a node's readme is served by that node's endpoint",
+            }
         raise MCPError("validation", f"tool {name!r} is not available on the aggregator endpoint")
 
 

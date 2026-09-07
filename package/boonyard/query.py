@@ -498,6 +498,12 @@ def node_info(
         meta = {r["key"]: r["value"] for r in c.execute("SELECT key, value FROM meta")}
         entry_count = c.execute("SELECT COUNT(*) AS n FROM entry").fetchone()["n"]
         last_write = c.execute("SELECT MAX(timestamp) AS t FROM entry").fetchone()["t"]
+        # The node's own readme: the newest revision of the reserved skill slug
+        # ``readme`` (ADR-0004 clarification 2026-09-07; boonyard #125).
+        readme_row = c.execute(
+            "SELECT e.id FROM entry e JOIN entry_tag t ON t.entry_id = e.id "
+            "WHERE e.entry_type = 'skill' AND t.tag = 'skill-readme' ORDER BY e.id DESC LIMIT 1"
+        ).fetchone()
     profile_summary: dict = {}
     if profile is not None:
         profile_summary = {
@@ -514,6 +520,8 @@ def node_info(
         "entry_count": entry_count,
         "storage_bytes": _storage_bytes(db_path),
         "last_write_at": last_write,
+        "has_readme": readme_row is not None,
+        "readme_id": readme_row["id"] if readme_row is not None else None,
         "profile": profile_summary,
     }
 

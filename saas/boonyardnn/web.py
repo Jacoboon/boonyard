@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, quote, urlencode
 
 from . import __version__, provisioner
 from .accounts import PASSWORD_MIN, Account, AccountError, Accounts, TokenError
+from .legal import PRIVACY_HTML, TERMS_HTML
 from .mailer import MailError, login_mail, verify_mail
 from .registry import Registry, RegistryError, SlugError, validate_slug
 
@@ -157,6 +158,7 @@ def _layout(title: str, body: str, *, nav: str = "") -> bytes:
         f'<p class="muted">{nav}</p>{body}'
         '<footer><a href="https://boonyard.com/">boonyard.com</a> · '
         f'<a href="{PREFIX}/privacy">privacy</a> · '
+        f'<a href="{PREFIX}/terms">terms</a> · '
         '<a href="https://github.com/Jacoboon/boonyard">source</a> · '
         f"boonyardnn {_esc(__version__)}</footer></main></body></html>"
     )
@@ -230,6 +232,8 @@ class WebApp:
             return self.founders_json()
         if head == "privacy" and len(parts) == 1 and get:
             return self.privacy()
+        if head == "terms" and len(parts) == 1 and get:
+            return self.terms()
         if head == "health" and len(parts) == 1 and get:
             return self.health()
         return self._page("Not found", "<p>Nothing here.</p>", status=404)
@@ -375,6 +379,9 @@ class WebApp:
             '<input id="password" name="password" type="password" '
             'autocomplete="new-password" '
             f"minlength=\"{PASSWORD_MIN}\" maxlength=\"256\">"
+            f'<p class="muted">By creating an account you agree to the '
+            f'<a href="{PREFIX}/terms">Terms</a> and the '
+            f'<a href="{PREFIX}/privacy">Privacy Policy</a>.</p>'
             "<button type=\"submit\">Create account</button>"
             "</form>"
             f"<p class=\"muted\">Already have one? <a href=\"{PREFIX}/login\">Sign in</a>. "
@@ -529,25 +536,12 @@ class WebApp:
         )
 
     def privacy(self) -> Response:
-        body = (
-            "<h2>what we store</h2>"
-            "<p>Your email address, your username, a salted hash of your password if you set one, "
-            "and the nodes you create: one SQLite file per node, in a directory only the service "
-            "process can read. We keep no analytics and no tracking pixels.</p>"
-            "<h2>who can read your entries</h2>"
-            "<p>Everything between you and this server is encrypted in transit. On the server, "
-            "the service reads your entries only to answer your own requests — search, threads, "
-            "tags — and for nothing else: not analytics, not training, not curiosity. The "
-            "honest part: a server that can search your entries can technically read them, and "
-            "so can the person who runs it. We don't. If that is not good enough for what you "
-            "are storing, run the same software yourself: it is open source and free, and a "
-            "self-hosted node is unreadable to us because it never touches our disk.</p>"
-            "<h2>leaving</h2>"
-            "<p>Export any node at any time from the dashboard; the file is yours and opens in any "
-            "SQLite tool. Keys can be revoked instantly. To close your account, write to "
-            '<a href="mailto:hello@boonyard.com">hello@boonyard.com</a>.</p>'
-        )
-        return self._page("Privacy", body, nav="what we store, and who can see it")
+        """The Privacy Policy — ``docs/legal/PRIVACY_POLICY_DRAFT.md``, served (order §4)."""
+        return self._page("Privacy Policy", PRIVACY_HTML, nav="what we store, and who can see it")
+
+    def terms(self) -> Response:
+        """The Terms of Service — ``docs/legal/TERMS_OF_SERVICE_DRAFT.md``, served (order §4)."""
+        return self._page("Terms of Service", TERMS_HTML, nav="the deal, in plain English")
 
     # -- the dashboard --------------------------------------------------------
     def _plan_line(self, account: Account) -> str:
