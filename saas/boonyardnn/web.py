@@ -799,7 +799,9 @@ def make_web_handler(app: WebApp):
                 cookies,
             )
 
-        def _send(self, status: int, headers: list[tuple[str, str]], body: bytes) -> None:
+        def _send(
+            self, status: int, headers: list[tuple[str, str]], body: bytes, *, head: bool = False
+        ) -> None:
             self.send_response(status)
             has_len = False
             for name, value in headers:
@@ -808,13 +810,13 @@ def make_web_handler(app: WebApp):
             if not has_len:
                 self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            if body:
+            if body and not head:
                 self.wfile.write(body)
 
-        def _serve(self, method: str) -> None:
+        def _serve(self, method: str, *, head: bool = False) -> None:
             req = self._request(method)
             if req is None:
-                self._send(404, [("Content-Type", "text/plain")], b"not found\n")
+                self._send(404, [("Content-Type", "text/plain")], b"not found\n", head=head)
                 return
             if req.method == "POST" and int(self.headers.get("Content-Length") or 0) > MAX_BODY:
                 self._send(413, [("Content-Type", "text/plain")], b"too large\n")
@@ -826,10 +828,13 @@ def make_web_handler(app: WebApp):
                 status, headers, body = app._page(
                     "Something went wrong", "<p>Internal error. Nothing was lost.</p>", status=500
                 )
-            self._send(status, headers, body)
+            self._send(status, headers, body, head=head)
 
         def do_GET(self):
             self._serve("GET")
+
+        def do_HEAD(self):  # the headers a GET would send, no body (monitors, curl -I)
+            self._serve("GET", head=True)
 
         def do_POST(self):
             self._serve("POST")

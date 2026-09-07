@@ -300,6 +300,14 @@ class PublicPagesTests(WebTestCase):
         else:
             self.fail("expected 404")
 
+    def test_head_sends_headers_without_a_body(self):
+        req = urllib.request.Request(self.web.url("/signup"), method="HEAD")
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers["X-Content-Type-Options"], "nosniff")
+            self.assertGreater(int(resp.headers["Content-Length"]), 100)
+            self.assertEqual(resp.read(), b"")
+
     def test_handler_never_logs(self):
         from boonyardnn.web import make_web_handler
 
