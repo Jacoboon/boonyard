@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temporarily unavailable — BoonyardNN</title>
+<meta name="robots" content="noindex">
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --text: #d6dde6;
+    --muted: #8b96a5;
+    --accent: #e8b44c;
+    --accent-dim: #9c7a35;
+    --border: #2a313b;
+    --mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.65 Georgia, "Times New Roman", serif;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 4rem 1.5rem 2rem; }
+  h1 {
+    font-family: var(--mono);
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+  .tagline { color: var(--muted); font-style: italic; margin-bottom: 2rem; }
+  p { margin-bottom: 1rem; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  ul { margin: 0 0 1rem 1.2rem; }
+  li { margin-bottom: 0.35rem; }
+  code {
+    font-family: var(--mono); font-size: 0.85em; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 4px; padding: 0.1em 0.4em;
+  }
+  footer {
+    margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+    color: var(--muted); font-family: var(--mono); font-size: 0.8rem;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>be right back</h1>
+  <p class="tagline">Something on our side is not answering right now. Your data is untouched — this is the front desk being down, not the archive.</p>
+
+  <p>What to do:</p>
+  <ul>
+    <li>Wait a minute and reload — most of these clear on their own.</li>
+    <li>Your <b>MCP connectors are on different hostnames</b> and may well still be working;
+        this page is only the website.</li>
+    <li>If it persists, tell us: <a href="mailto:hello@boonyard.com">hello@boonyard.com</a>.
+        A real person reads that.</li>
+  </ul>
+
+  <p class="muted">Nothing you have written is affected. Every node is a SQLite file on disk,
+  backed up nightly, and an outage here does not touch it.</p>
+
+  <footer>
+    <a href="https://github.com/Jacoboon/boonyard">github.com/Jacoboon/boonyard</a> ·
+    contact: <a href="mailto:hello@boonyard.com">hello@boonyard.com</a> ·
+    <a href="/app/terms">terms</a> · <a href="/app/privacy">privacy</a><br>
+    boonyardnn — built in the open, dogfooded first.
+  </footer>
+</main>
+</body>
+</html>
