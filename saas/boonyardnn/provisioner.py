@@ -170,7 +170,12 @@ def set_plan(registry: Registry, user_slug: str, plan: str) -> User:
     return registry.set_plan(user, plan)
 
 
-def backup_config(registry: Registry, base_path: str | Path | None = None) -> str:
+def backup_config(
+    registry: Registry,
+    base_path: str | Path | None = None,
+    *,
+    heartbeat_node: str | None = None,
+) -> str:
     """A ``[nodes]`` TOML table for the nightly backup: the base file's nodes + every hosted node.
 
     ``backup_walls.py`` (the proven export → restore-proof → heartbeat path) reads a
@@ -217,6 +222,21 @@ def backup_config(registry: Registry, base_path: str | Path | None = None) -> st
     ]
     for key, path in rows:
         lines.append(f"{key} = '{path}'")
+    # ⚠ THIS FILE IS THE ONLY CONFIG THE NIGHTLY READS (2026-09-08). The unit's
+    # ExecStart passes --config pointing HERE, not at the base — and this generator
+    # emits only the tables it writes, so anything left in the base never reaches the
+    # script. `[backup] heartbeat_node` therefore has to be emitted here or the
+    # migration order's §3.2 is unperformable: the key would be set in a file nothing
+    # reads, and §1.2 would then make the run FATAL for a setting that was, from the
+    # operator's side, correctly configured.
+    if heartbeat_node is not None:
+        if heartbeat_node not in dict(rows):
+            raise RegistryError(
+                f"heartbeat_node {heartbeat_node!r} is not one of the nodes this config "
+                f"carries: {', '.join(sorted(k for k, _ in rows)) or '(none)'}. The nightly "
+                "would abort every night looking for a wall that is not in its registry."
+            )
+        lines += ["", "[backup]", f"heartbeat_node = '{heartbeat_node}'"]
     return "\n".join(lines) + "\n"
 
 

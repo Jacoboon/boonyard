@@ -303,14 +303,18 @@ def cmd_account(args) -> int:
 
 def cmd_backup_config(args) -> int:
     reg = _registry(args)
-    text = provisioner.backup_config(reg, args.base)
+    text = provisioner.backup_config(reg, args.base, heartbeat_node=args.heartbeat_node)
     if args.out:
         out = Path(args.out)
         tmp = out.with_name(out.name + ".tmp")
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, out)
-        rows = sum(1 for line in text.splitlines() if " = '" in line)
-        print(f"wrote {out} ({rows} nodes)")
+        # Count rows in [nodes] only: [backup] carries a `key = 'value'` line too, and
+        # counting it would report one node more than the file actually registers.
+        body = text.split("[nodes]", 1)[-1].split("[backup]", 1)[0]
+        rows = sum(1 for line in body.splitlines() if " = '" in line)
+        beat = f", heartbeat -> {args.heartbeat_node}" if args.heartbeat_node else ""
+        print(f"wrote {out} ({rows} nodes{beat})")
     else:
         print(text, end="")
     return EXIT_OK
@@ -416,6 +420,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--base", help="a TOML whose [nodes] rows are copied first (the six walls)")
     p.add_argument("--out", help="write here (atomic) instead of stdout")
+    p.add_argument(
+        "--heartbeat-node",
+        help="emit [backup] heartbeat_node — the [nodes] key the nightly's heartbeat lands "
+        "on. This generated file is the only config the nightly reads, so the setting has "
+        "to be here. Refused if it is not one of the nodes emitted.",
+    )
     p.set_defaults(func=cmd_backup_config)
 
     p = sub.add_parser(

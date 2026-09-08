@@ -89,6 +89,24 @@ class RegistryTests(unittest.TestCase):
             ["alice__n1", "bob__wall-2"],
         )
 
+    def test_the_heartbeat_node_is_emitted_because_this_is_the_only_config_read(self):
+        """The unit's ExecStart reads the GENERATED file, and this generator emits only
+        the tables it writes — so `[backup] heartbeat_node` left in the base would never
+        reach the nightly, and §1.2 would then abort every run over a setting the
+        operator had, from their side, configured correctly."""
+        self._root.provision("alice", "n1")
+        text = provisioner.backup_config(self.reg, heartbeat_node="alice__n1")
+        data = tomllib.loads(text)
+        self.assertEqual(data["backup"]["heartbeat_node"], "alice__n1")
+        self.assertEqual(list(data["nodes"]), ["alice__n1"])
+
+    def test_a_heartbeat_node_this_config_does_not_carry_is_refused_here(self):
+        """Loud at generation time beats FATAL every night at 03:00."""
+        self._root.provision("alice", "n1")
+        with self.assertRaises(ValueError) as caught:
+            provisioner.backup_config(self.reg, heartbeat_node="umbrella")
+        self.assertIn("alice__n1", str(caught.exception))
+
     def test_a_base_that_contributes_nothing_is_a_fault_not_a_choice(self):
         """§1.5a. ``base.get("nodes", {})`` collapsed "hosted-only, deliberately" and
         "you handed me a base and it gave me no walls" into one silent outcome — and
