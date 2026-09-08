@@ -44,6 +44,29 @@ class AggregatorTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
 
+class NodeNameTests(AggregatorTestCase):
+    """Node names become SQL identifiers, so the charset is load-bearing."""
+
+    def test_hyphenated_names_work_because_hosted_slugs_have_hyphens(self):
+        """ADR-0008 slugs are [a-z0-9-]+. Rejecting hyphens broke the account door
+        on every real account, and the fixtures that hid it had no hyphens."""
+        nodes = {}
+        for slug in ("wall-one", "wall-two"):
+            db = Path(self._tmp.name) / slug / "journal.db"
+            init_db(db, node_name=slug)
+            log_entry("system", "note", f"in {slug}", db_path=db)
+            nodes[slug] = str(db)
+        agg = Aggregator(nodes)
+        rows = agg.recent(10)
+        self.assertEqual({r["source"] for r in rows}, {"wall-one", "wall-two"})
+        self.assertEqual([r["source"] for r in agg.recent(10, scope="wall-two")], ["wall-two"])
+
+    def test_a_name_that_could_break_out_of_the_quoting_is_still_refused(self):
+        for hostile in ('a"b', "a b", "a;b", "a.b", "a'b", "../x", ""):
+            with self.subTest(name=hostile), self.assertRaises(ValueError):
+                Aggregator({hostile: "/tmp/x.db"})
+
+
 class UnionTests(AggregatorTestCase):
     def test_recent_unions_all_nodes_with_source(self):
         rows = self.agg.recent()

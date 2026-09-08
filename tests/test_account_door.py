@@ -72,7 +72,7 @@ class NodeMapCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.nodes = {}
-        for slug, entries in (("alpha", 2), ("beta", 3)):
+        for slug, entries in (("alpha-one", 2), ("beta-two", 3)):
             node_dir = self.root / slug
             node_dir.mkdir()
             db = node_dir / "journal.db"
@@ -82,8 +82,8 @@ class NodeMapCase(unittest.TestCase):
             self.nodes[slug] = str(db)
         # alpha carries a profile; beta does not. The account door must honour each
         # node's own boonyard.toml, exactly as that node's own door would.
-        (self.root / "alpha" / "boonyard.toml").write_text(
-            '[node]\nname = "alpha"\n\n[tags.namespaces]\nlane = "alpha\'s own namespace"\n',
+        (self.root / "alpha-one" / "boonyard.toml").write_text(
+            '[node]\nname = "alpha-one"\n\n[tags.namespaces]\nlane = "alpha\'s own namespace"\n',
             encoding="utf-8",
         )
         self.meter = self.root / "meter.db"
@@ -102,8 +102,8 @@ class ConstructionTests(NodeMapCase):
     def test_exactly_one_source_and_the_error_names_all_three(self):
         for kwargs in (
             {},
-            {"db_path": self.nodes["alpha"], "nodes": self.nodes},
-            {"db_path": self.nodes["alpha"], "aggregator": aggregator(nodes=self.nodes)},
+            {"db_path": self.nodes["alpha-one"], "nodes": self.nodes},
+            {"db_path": self.nodes["alpha-one"], "aggregator": aggregator(nodes=self.nodes)},
             {"nodes": self.nodes, "aggregator": aggregator(nodes=self.nodes)},
         ):
             with self.assertRaises(ValueError) as caught:
@@ -131,7 +131,7 @@ class ConstructionTests(NodeMapCase):
         self.assertIn("no nodes yet", error["message"])
 
     def test_single_node_mode_is_unchanged(self):
-        server = MCPServer(db_path=self.nodes["alpha"])
+        server = MCPServer(db_path=self.nodes["alpha-one"])
         self.assertFalse(server._read_only)
         self.assertEqual(server._mode, "single")
 
@@ -147,13 +147,13 @@ class TwoModesTests(NodeMapCase):
 
     def test_the_two_modes_differ(self):
         """SAME node map. One construction refuses the write, the other accepts it."""
-        before = _count(Path(self.nodes["alpha"]))
+        before = _count(Path(self.nodes["alpha-one"]))
 
         refused = _error(
             self.aggregate(), "log_entry", agent="code", entry_type="note", content="x"
         )
         self.assertEqual(refused["data"]["error"], "read_only")
-        self.assertEqual(_count(Path(self.nodes["alpha"])), before, "the refusal still wrote")
+        self.assertEqual(_count(Path(self.nodes["alpha-one"])), before, "the refusal still wrote")
 
         landed = _call(
             self.account(),
@@ -161,10 +161,10 @@ class TwoModesTests(NodeMapCase):
             agent="code",
             entry_type="note",
             content="x",
-            node="alpha",
+            node="alpha-one",
         )
         self.assertIsInstance(landed["id"], int)
-        self.assertEqual(_count(Path(self.nodes["alpha"])), before + 1)
+        self.assertEqual(_count(Path(self.nodes["alpha-one"])), before + 1)
 
     def test_read_only_is_not_derived_from_holding_an_aggregator(self):
         """Both modes hold one; only aggregator mode is read-only."""
@@ -186,11 +186,13 @@ class WriteRoutingTests(NodeMapCase):
             agent="code",
             entry_type="note",
             content="for beta only",
-            node="beta",
+            node="beta-two",
         )
-        self.assertEqual(_count(Path(self.nodes["beta"])), before["beta"] + 1)
+        self.assertEqual(_count(Path(self.nodes["beta-two"])), before["beta-two"] + 1)
         self.assertEqual(
-            _count(Path(self.nodes["alpha"])), before["alpha"], "the write leaked into another node"
+            _count(Path(self.nodes["alpha-one"])),
+            before["alpha-one"],
+            "the write leaked into another node",
         )
 
     def test_a_write_with_no_node_is_a_missing_parameter(self):
@@ -204,8 +206,8 @@ class WriteRoutingTests(NodeMapCase):
             self.account(), "log_entry", agent="code", entry_type="note", content="x", node="nope"
         )
         self.assertEqual(error["code"], -32602)
-        self.assertIn("alpha", error["message"])
-        self.assertIn("beta", error["message"])
+        self.assertIn("alpha-one", error["message"])
+        self.assertIn("beta-two", error["message"])
         self.assertIn("list_nodes", error["data"]["hint"])
 
     def test_skill_revisions_route_the_same_way(self):
@@ -215,12 +217,12 @@ class WriteRoutingTests(NodeMapCase):
             slug="readme",
             content="beta's readme",
             agent="code",
-            node="beta",
+            node="beta-two",
         )
         self.assertIsInstance(payload["id"], int)
-        latest = _call(self.account(), "latest_skill", slug="readme", scope="beta")
+        latest = _call(self.account(), "latest_skill", slug="readme", scope="beta-two")
         self.assertEqual(latest["content"], "beta's readme")
-        self.assertIsNone(_call(self.account(), "latest_skill", slug="readme", scope="alpha"))
+        self.assertIsNone(_call(self.account(), "latest_skill", slug="readme", scope="alpha-one"))
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +240,7 @@ class ToolSurfaceTests(NodeMapCase):
             self.assertIn("node", schemas[tool]["properties"], tool)
 
     def test_node_is_absent_at_the_per_node_door(self):
-        schemas = self._defs(MCPServer(db_path=self.nodes["alpha"]))
+        schemas = self._defs(MCPServer(db_path=self.nodes["alpha-one"]))
         for tool in ("log_entry", "log_skill_revision"):
             self.assertNotIn("node", schemas[tool]["required"], tool)
             self.assertNotIn("node", schemas[tool]["properties"], tool)
@@ -267,24 +269,24 @@ class ToolSurfaceTests(NodeMapCase):
 class ReadTests(NodeMapCase):
     def test_recent_spans_every_node_and_every_row_names_its_source(self):
         rows = _call(self.account(), "recent", limit=20)
-        self.assertEqual({r["source"] for r in rows}, {"alpha", "beta"})
+        self.assertEqual({r["source"] for r in rows}, {"alpha-one", "beta-two"})
         self.assertEqual(len(rows), 5)
 
     def test_scope_narrows_to_one_node(self):
-        rows = _call(self.account(), "recent", limit=20, scope="beta")
+        rows = _call(self.account(), "recent", limit=20, scope="beta-two")
         self.assertEqual(len(rows), 3)
-        self.assertTrue(all("beta" in r["content"] for r in rows))
+        self.assertTrue(all("beta-two" in r["content"] for r in rows))
 
     def test_list_nodes_returns_every_node(self):
         rows = _call(self.account(), "list_nodes")
-        self.assertEqual({r["name"] for r in rows}, {"alpha", "beta"})
+        self.assertEqual({r["name"] for r in rows}, {"alpha-one", "beta-two"})
 
     def test_node_info_serves_the_named_node_and_its_own_profile(self):
-        info = _call(self.account(), "node_info", scope="alpha")
-        self.assertEqual(info["name"], "alpha")
+        info = _call(self.account(), "node_info", scope="alpha-one")
+        self.assertEqual(info["name"], "alpha-one")
         self.assertIn("lane", info["profile"]["namespaces"])
-        beta = _call(self.account(), "node_info", scope="beta")
-        self.assertEqual(beta["name"], "beta")
+        beta = _call(self.account(), "node_info", scope="beta-two")
+        self.assertEqual(beta["name"], "beta-two")
         self.assertNotIn("lane", beta["profile"]["namespaces"])
 
     def test_node_info_unnamed_keeps_the_aggregator_answer(self):
@@ -298,9 +300,9 @@ class ReadTests(NodeMapCase):
             slug="readme",
             content="alpha's readme",
             agent="code",
-            node="alpha",
+            node="alpha-one",
         )
-        named = _call(self.account(), "instructions", scope="alpha")
+        named = _call(self.account(), "instructions", scope="alpha-one")
         self.assertEqual(named["readme"]["content"], "alpha's readme")
         spanning = _call(self.account(), "instructions")
         self.assertIsNone(spanning["readme"])
@@ -338,19 +340,24 @@ class MeterTests(NodeMapCase):
 
     def test_a_write_is_metered_in_the_node_it_addressed(self):
         _call(
-            self.account(), "log_entry", agent="code", entry_type="note", content="x", node="beta"
+            self.account(),
+            "log_entry",
+            agent="code",
+            entry_type="note",
+            content="x",
+            node="beta-two",
         )
         self.assertEqual(
-            [r for r in self._rows(self._node_meter("beta")) if r[0] == "log_entry"],
-            [("log_entry", "beta", "write")],
+            [r for r in self._rows(self._node_meter("beta-two")) if r[0] == "log_entry"],
+            [("log_entry", "beta-two", "write")],
         )
         self.assertEqual([r for r in self._rows(self.meter) if r[0] == "log_entry"], [])
-        self.assertEqual(self._rows(self._node_meter("alpha")), [])
+        self.assertEqual(self._rows(self._node_meter("alpha-one")), [])
 
     def test_a_spanning_read_meters_on_the_account_and_heats_each_node(self):
         _call(self.account(), "recent", limit=20)
         self.assertIn(("recent", "all", "read"), self._rows(self.meter))
-        for slug in ("alpha", "beta"):
+        for slug in ("alpha-one", "beta-two"):
             heat = self._rows(self._node_meter(slug), "read_hit")
             self.assertTrue(heat, f"{slug} recorded no read heat")
             self.assertEqual({r[1] for r in heat}, {slug})
@@ -358,18 +365,25 @@ class MeterTests(NodeMapCase):
 
     def test_one_nodes_reads_never_heat_another_nodes_entries(self):
         """The collision this rule exists for: both nodes have an entry #1."""
-        _call(self.account(), "by_id", entry_id=1, scope="beta")
-        beta_heat = self._rows(self._node_meter("beta"), "read_hit")
-        self.assertEqual([(r[1], r[2]) for r in beta_heat], [("beta", 1)])
-        self.assertEqual(self._rows(self._node_meter("alpha"), "read_hit"), [])
+        _call(self.account(), "by_id", entry_id=1, scope="beta-two")
+        beta_heat = self._rows(self._node_meter("beta-two"), "read_hit")
+        self.assertEqual([(r[1], r[2]) for r in beta_heat], [("beta-two", 1)])
+        self.assertEqual(self._rows(self._node_meter("alpha-one"), "read_hit"), [])
 
     def test_read_stats_at_the_account_door_reads_that_nodes_meter(self):
         _call(
-            self.account(), "log_entry", agent="code", entry_type="note", content="x", node="beta"
+            self.account(),
+            "log_entry",
+            agent="code",
+            entry_type="note",
+            content="x",
+            node="beta-two",
         )
-        stats = _call(self.account(), "read_stats", scope="beta")
+        stats = _call(self.account(), "read_stats", scope="beta-two")
         self.assertEqual(stats["totals"]["writes"], 1)
-        self.assertEqual(_call(self.account(), "read_stats", scope="alpha")["totals"]["writes"], 0)
+        self.assertEqual(
+            _call(self.account(), "read_stats", scope="alpha-one")["totals"]["writes"], 0
+        )
 
 
 if __name__ == "__main__":

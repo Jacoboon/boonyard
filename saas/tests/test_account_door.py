@@ -21,9 +21,11 @@ class AccountDoorCase(unittest.TestCase):
         self._root = TmpRoot().__enter__()
         self.addCleanup(self._root.__exit__, None, None, None)
         self.reg: Registry = self._root.registry
-        # alice owns two nodes; the node key is for n1 only.
-        self.node_key = self._root.provision("alice", "n1", label="n1 seat")
-        provisioner.add_node(self.reg, "alice", "n2")
+        # Two HYPHENATED nodes: ADR-0008 slugs carry hyphens, and hyphen-free
+        # fixtures are exactly what hid the aggregator's identifier rule.
+        # The node key is for n-1 only.
+        self.node_key = self._root.provision("alice", "n-1", label="n1 seat")
+        provisioner.add_node(self.reg, "alice", "n-2")
         self.account_key, self.account_record = provisioner.add_account_key(
             self.reg, "alice", label="laptop"
         )
@@ -59,7 +61,7 @@ class RouteTests(AccountDoorCase):
 
     def test_the_per_node_door_still_advertises_no_node(self):
         status, body, _ = self.served.post(
-            "/alice/n1", rpc("tools/list"), {"Authorization": f"Bearer {self.node_key}"}
+            "/alice/n-1", rpc("tools/list"), {"Authorization": f"Bearer {self.node_key}"}
         )
         self.assertEqual(status, 200)
         schemas = {t["name"]: t["inputSchema"] for t in body["result"]["tools"]}
@@ -67,7 +69,7 @@ class RouteTests(AccountDoorCase):
 
     def test_list_nodes_returns_every_node_the_key_reaches(self):
         _status, body, _ = self.account(tool_call("list_nodes"))
-        self.assertEqual({n["name"] for n in payload_of(body)}, {"n1", "n2"})
+        self.assertEqual({n["name"] for n in payload_of(body)}, {"n-1", "n-2"})
 
     def test_the_transport_suffix_still_reaches_the_account_door(self):
         status, body, _ = self.account(rpc("tools/list"))
@@ -86,13 +88,13 @@ class ScopeTests(AccountDoorCase):
 
     def test_the_same_node_key_still_works_at_its_own_node(self):
         status, _body, _ = self.served.post(
-            "/alice/n1", rpc("tools/list"), {"Authorization": f"Bearer {self.node_key}"}
+            "/alice/n-1", rpc("tools/list"), {"Authorization": f"Bearer {self.node_key}"}
         )
         self.assertEqual(status, 200)
 
     def test_an_account_key_is_a_superset_and_works_at_a_node_door(self):
         status, _body, _ = self.served.post(
-            "/alice/n2", rpc("tools/list"), {"Authorization": f"Bearer {self.account_key}"}
+            "/alice/n-2", rpc("tools/list"), {"Authorization": f"Bearer {self.account_key}"}
         )
         self.assertEqual(status, 200)
 
@@ -117,14 +119,14 @@ class WriteTests(AccountDoorCase):
         status, body, _ = self.account(
             tool_call(
                 "log_entry",
-                {"agent": "code", "entry_type": "note", "content": "for n2", "node": "n2"},
+                {"agent": "code", "entry_type": "note", "content": "for n2", "node": "n-2"},
             )
         )
         self.assertEqual(status, 200)
         self.assertIsInstance(payload_of(body)["id"], int)
         after = self.counts()
-        self.assertEqual(after["n2"], before["n2"] + 1)
-        self.assertEqual(after["n1"], before["n1"], "the write leaked into another node")
+        self.assertEqual(after["n-2"], before["n-2"] + 1)
+        self.assertEqual(after["n-1"], before["n-1"], "the write leaked into another node")
 
     def test_a_write_with_no_node_is_refused(self):
         status, body, _ = self.account(
@@ -141,11 +143,11 @@ class WriteTests(AccountDoorCase):
         )
         self.assertEqual(status, 200)
         message = body["error"]["message"]
-        self.assertIn("n1", message)
-        self.assertIn("n2", message)
+        self.assertIn("n-1", message)
+        self.assertIn("n-2", message)
 
     def test_a_read_spans_the_nodes_and_names_each_source(self):
-        for slug in ("n1", "n2"):
+        for slug in ("n-1", "n-2"):
             self.account(
                 tool_call(
                     "log_entry",
@@ -158,15 +160,15 @@ class WriteTests(AccountDoorCase):
                 )
             )
         _status, body, _ = self.account(tool_call("recent", {"limit": 50}))
-        self.assertEqual({r["source"] for r in payload_of(body)}, {"n1", "n2"})
+        self.assertEqual({r["source"] for r in payload_of(body)}, {"n-1", "n-2"})
 
 
 class LiveMapTests(AccountDoorCase):
     def test_a_node_created_after_the_connector_is_reachable_with_no_restart(self):
         """The promise the ADR is named for — and the reason the map is per request."""
-        provisioner.add_node(self.reg, "alice", "n3")
+        provisioner.add_node(self.reg, "alice", "n-3")
         _status, body, _ = self.account(tool_call("list_nodes"))
-        self.assertIn("n3", {n["name"] for n in payload_of(body)})
+        self.assertIn("n-3", {n["name"] for n in payload_of(body)})
         status, body, _ = self.account(
             tool_call(
                 "log_entry",
@@ -174,7 +176,7 @@ class LiveMapTests(AccountDoorCase):
                     "agent": "code",
                     "entry_type": "note",
                     "content": "born after the connector",
-                    "node": "n3",
+                    "node": "n-3",
                 },
             )
         )
@@ -196,7 +198,7 @@ class LimitTests(unittest.TestCase):
         self._root = TmpRoot().__enter__()
         self.addCleanup(self._root.__exit__, None, None, None)
         self.reg = self._root.registry
-        self._root.provision("alice", "n1")
+        self._root.provision("alice", "n-1")
         self.k1, _ = provisioner.add_account_key(self.reg, "alice", label="one")
         self.k2, _ = provisioner.add_account_key(self.reg, "alice", label="two")
         # two reads a minute, burst 1: the third read of the minute must wait.

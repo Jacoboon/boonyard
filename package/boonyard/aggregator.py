@@ -43,7 +43,21 @@ _log = logging.getLogger("boonyard")
 # Safe margin below SQLite's default SQLITE_MAX_ATTACHED (10).
 _MAX_ATTACH = 8
 # Node names become SQL identifiers (ATTACH ... AS "<name>"); constrain them.
-_IDENT = re.compile(r"^[A-Za-z0-9_]+$")
+#
+# ⚠ HYPHENS ARE ALLOWED (2026-09-07, ADR-0014). They have to be: ADR-0008 slugs are
+# `[a-z0-9-]+`, so every hosted node — `test-0`, and every wall after the migration
+# (`mycelium-sky`, `tea-guru`) — carries one, and the account door builds an
+# Aggregator over exactly those slugs. Rejecting them made the account door raise a
+# ValueError on any real account, which is how this was found: the tests used
+# hyphen-free fixture names and hid it.
+#
+# It is safe because every interpolation of a name in this module is already quoted —
+# `ATTACH DATABASE ? AS "{name}"`, `FROM "{name}".entry`, `SELECT '{name}' AS source`
+# — and this charset still admits no quote, backslash, space, dot or semicolon, so
+# there is nothing to break out of. The `[nodes]` table in an umbrella.toml keeps
+# using underscore keys by its own convention; that convention is now a preference,
+# not a constraint.
+_IDENT = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # scope may be None / 'all' / 'current' / a name / a list of names.
 Scope = str | Sequence[str] | None
