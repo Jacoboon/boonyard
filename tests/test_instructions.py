@@ -8,6 +8,7 @@ Two of these tests are the order's machinery: every tool name must appear in the
 import contextlib
 import io
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -293,6 +294,66 @@ class GhostsTests(NodeCase):
         self.assertEqual(code, 0)
         self.assertIn(f"#{self.unread}", out.getvalue())
         self.assertIn("1 ghost(s)", out.getvalue())
+
+
+class ReadmeNamesOnlyServedToolsTests(unittest.TestCase):
+    """THE CONVERSE OF THE EXISTING RULE, and the one that was missing.
+
+    ``test_every_tool_is_documented`` proves every served tool appears in the readme.
+    Nothing proved the other direction — that the readme names no tool the door REFUSES —
+    and four sentences were quietly wrong at the aggregate door because of it: the SKILLS
+    line named ``latest_skill`` and ``list_skills``, READ HEAT named ``ghosts``, and the
+    WRITING line named ``node_info``. A readme that names a refused tool sends a model
+    straight to an error, which is the defect ADR-0014 section 11 removed from tools/list
+    surviving in the text the model actually reads on every connect.
+    """
+
+    def _doors(self):
+        from boonyard.mcp import TOOL_DEFS, account_tool_defs, aggregator_tool_defs
+
+        return {
+            "single node": TOOL_DEFS,
+            "account": account_tool_defs(),
+            "aggregate": aggregator_tool_defs(),
+        }
+
+    def test_no_door_advertises_a_tool_it_refuses(self):
+        from boonyard.instructions import build
+        from boonyard.mcp import TOOL_DEFS
+
+        every_tool = {t["name"] for t in TOOL_DEFS}
+        for label, defs in self._doors().items():
+            served = {t["name"] for t in defs}
+            text = build(defs, "0.0.0")
+            named = {n for n in every_tool if re.search(rf"{re.escape(n)}", text)}
+            with self.subTest(door=label):
+                self.assertEqual(named - served, set(), f"{label} readme names refused tools")
+
+    def test_the_required_node_list_is_derived_not_typed(self):
+        from boonyard.instructions import build
+        from boonyard.mcp import account_tool_defs
+
+        defs = account_tool_defs()
+        needs = sorted(
+            t["name"] for t in defs if "node" in (t.get("inputSchema") or {}).get("required", [])
+        )
+        text = build(defs, "0.0.0")
+        self.assertGreater(len(needs), 5, "the account door marks more than the four once typed")
+        for name in needs:
+            self.assertIn(name, text, f"{name} requires node but the readme does not say so")
+
+    def test_a_single_node_door_says_nothing_takes_a_node(self):
+        from boonyard.instructions import build
+        from boonyard.mcp import TOOL_DEFS
+
+        self.assertIn("serves one node", build(TOOL_DEFS, "0.0.0"))
+
+    def test_every_door_stays_under_the_cap(self):
+        from boonyard.instructions import MAX_BYTES, build
+
+        for label, defs in self._doors().items():
+            with self.subTest(door=label):
+                self.assertLessEqual(len(build(defs, "3.5.0").encode()), MAX_BYTES)
 
 
 class HelpTests(unittest.TestCase):

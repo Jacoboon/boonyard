@@ -3,11 +3,13 @@
 > Append-only shared memory substrate for multi-agent collaboration.
 > Small on purpose. Owned by you. No lock-in, ever.
 
-**Status:** Phase 1 shipped. The `boonyard` package works — v3.2.0, zero runtime
-dependencies, 277 tests, 98% coverage — and has been running six live nodes in daily
-production use since 2026-07-18. The hosted service (`boonyard.com`) is in Phase 2: the
-per-user provisioner and the path router went live for user zero on 2026-09-06 at
-`mcp.boonyard.com`; signup is next. See [Status detail](#status-detail).
+**Status:** Phase 1 shipped; Phase 2 is live. The `boonyard` package is v3.5.0 — zero
+runtime dependencies, 360 tests — and has been running six live nodes in daily production
+use since 2026-07-18. The hosted service at `boonyard.com` is open: public signup, the
+dashboard and the node browser all run, and every one of those six nodes now answers
+through a single account-scoped MCP connector. Billing is designed
+([ADR-0011](docs/adr/0011-billing-prices-and-founders.md)) but not wired.
+See [Status detail](#status-detail).
 
 Read [CHARTER.md](CHARTER.md) for the soul, [docs/adr/](docs/adr/) for the locked decisions,
 [docs/roadmap/](docs/roadmap/) for the build sequence.
@@ -43,7 +45,7 @@ The package is not yet on PyPI. Both install paths below work today:
 ```bash
 # Install from source
 git clone https://github.com/Jacoboon/boonyard.git
-cd boonyard && pip install -e package/
+cd boonyard && pip install -e .
 
 cd ~/Code/my-project
 boonyard init --name my-project
@@ -174,14 +176,21 @@ thing this product wants to not be.
   the per-user provisioner and the path router (`saas/`, realising
   [ADR-0007](docs/adr/0007-multi-tenant-storage-layout.md) and
   [ADR-0008](docs/adr/0008-mcp-routing-and-auth.md)) run on the droplet at `mcp.boonyard.com`,
-  serving user zero since 2026-09-06. Signup, dashboard and billing are next
-  ([PHASE_3](docs/roadmap/PHASE_3.md)); there is no public signup yet. The self-hosted path
-  is complete and unchanged.
+  serving user zero since 2026-09-06. **Public signup, the dashboard and the node browser
+  are live** at `boonyard.com/app`. Billing is designed
+  ([ADR-0011](docs/adr/0011-billing-prices-and-founders.md): $8/month or $80/year, the first
+  twenty accounts free for a year) but Stripe is not wired. The self-hosted path is complete
+  and unchanged.
+- **The account door** ([ADR-0014](docs/adr/0014-account-scoped-access.md)) — one connector
+  per account at `https://mcp.boonyard.com/{user}` reaching every node the key can see, reads
+  and writes. Entry ids are node-local, so at any multi-node door `by_id`, `get_thread`,
+  `latest_skill` and the writes require a `node` argument, and every row names its node in
+  `source`. Six live walls were migrated onto it on 2026-09-08 and answer at both that door
+  and their own per-node endpoints.
 
 **Designed, not built:**
 
-- Writable multi-node routing — one connector fronting N nodes, with cross-node writes gated
-  by per-node seat registration. Requirement captured; ADR unwritten.
+- Billing. Prices and the founder terms are decided; no payment path exists yet.
 
 **Known open items** are listed in [CHANGELOG.md](CHANGELOG.md) under *Known open items* —
 including two real defects in the aggregator worth knowing before you register a node with a

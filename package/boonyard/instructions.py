@@ -38,24 +38,20 @@ WRITING — log_entry(agent, entry_type, content, related_id?, tags?). tags is a
 comma-separated string ("decision, project-x"), lowercase-hyphen, never JSON. Put \
 model:<your exact model name> in tags. related_id threads a reply or a correction to \
 the entry it answers — thread whenever you are answering something. One entry per \
-event, not a transcript. entry_type is one of the node's profile types (node_info lists \
-them); unknown values warn and still insert.
+event, not a transcript. entry_type is one of the node's profile types{types}; unknown \
+values warn and still insert.
 
 REGISTERS — a tag killdate:YYYY-MM-DD or open:YYYY-MM-DD makes a dated row; \
 upcoming_dates(prefix) reads them, overdue first, and never drops a past date. A \
 retired row is retagged open-retired:YYYY-MM-DD (CLI only; retag is not a tool).
 
-SKILLS — log_skill_revision(slug, content, agent) appends a revision of a named \
-skill; latest_skill(slug) returns the newest; list_skills is the catalog. The slug \
-"readme" is reserved for this node's own readme (tags: readme, instructions, agents).
+SKILLS — {skills}
 
-READ HEAT — every read records the ids it returned (never the query); ghosts lists \
-root entries nobody threaded to or read; read_stats is the read/write meter.
+READ HEAT — every read records the ids it returned (never the query); {heat}\
+read_stats is the read/write meter.
 
 IDS ARE NODE-LOCAL — #412 means nothing without its node: another node has its own \
-#412. If this endpoint serves several nodes, every row names its node in "source" and \
-by_id, get_thread, latest_skill and the writes require node=<slug> (list_nodes gives \
-the slugs). Cite an entry as #412@umbrella, and pass that slug back as node.
+#412. {nodearg}Cite an entry as #412@umbrella, and pass that slug back as node.
 
 TOOLS (name — purpose):
 {tools}
@@ -70,14 +66,63 @@ def _clause(description: str) -> str:
     return first if len(first) <= 72 else first[:69].rstrip() + "…"
 
 
+def _requires_node(tool: dict) -> bool:
+    """Does this door mark ``node`` as a REQUIRED argument on this tool?
+
+    Example:
+        _requires_node({"inputSchema": {"required": ["node"]}})  # -> True
+    """
+    return "node" in (tool.get("inputSchema") or {}).get("required", [])
+
+
 def build(tool_defs: list[dict], version: str) -> str:
     """Assemble the readme from the tool definitions and the hand-written body.
 
+    ⚠ EVERY SENTENCE THAT NAMES A TOOL IS DERIVED FROM ``tool_defs``, never hand-typed
+    (2026-09-08). Three were prose and all three were wrong at some door: the SKILLS line
+    named ``latest_skill`` and ``list_skills`` at the aggregate door, which serves neither;
+    READ HEAT named ``ghosts`` the same way; and the node-local paragraph hand-listed four
+    tools when the account door marks **nine**. A readme that names a tool the door refuses
+    sends a model straight to an error — the defect ADR-0014 §11 removed from ``tools/list``,
+    surviving in the text the model actually reads on every connect.
+
     Example:
-        build(TOOL_DEFS, "3.3.0").startswith("BOONYARD NODE")
+        build(TOOL_DEFS, "3.5.0").startswith("BOONYARD NODE")
     """
+    names = {t["name"] for t in tool_defs}
     lines = [f"  {t['name']} — {_clause(t['description'])}" for t in tool_defs]
-    return _BODY.format(version=version, tools="\n".join(lines))
+
+    if "log_skill_revision" in names:
+        skills = "log_skill_revision(slug, content, agent) appends a revision of a named skill"
+        if "latest_skill" in names:
+            skills += "; latest_skill(slug) returns the newest"
+        if "list_skills" in names:
+            skills += "; list_skills is the catalog"
+        skills += (
+            '. The slug "readme" is reserved for this node\'s own readme '
+            "(tags: readme, instructions, agents)."
+        )
+    else:
+        skills = "address a specific node to reach the skill tools; this door does not serve them."
+
+    heat = "ghosts lists root entries nobody threaded to or read; " if "ghosts" in names else ""
+
+    needs = sorted(t["name"] for t in tool_defs if _requires_node(t))
+    nodearg = (
+        'Every row names its node in "source", and this door requires node=<slug> on '
+        f"{', '.join(needs)} (list_nodes gives the slugs). "
+        if needs
+        else "This door serves one node, so nothing here takes a node argument. "
+    )
+    types = " (node_info lists them)" if "node_info" in names else ""
+    return _BODY.format(
+        version=version,
+        tools="\n".join(lines),
+        skills=skills,
+        heat=heat,
+        nodearg=nodearg,
+        types=types,
+    )
 
 
 def instructions_text(tool_defs: list[dict] | None = None) -> str:

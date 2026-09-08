@@ -123,7 +123,8 @@ reports: security@boonyard.com.</p>
 
 PRIVACY_HTML = f"""
 <p class="muted">Effective {EFFECTIVE}. Every sentence below is true of the service as it runs
-today; the at-rest sentences change when encrypted storage is verified live.</p>
+today. The at-rest sentences were updated on 2026-09-08, when encrypted storage went live and
+was verified: they now describe more protection than they did, not less.</p>
 <p>This policy covers the hosted service at boonyard.com and mcp.boonyard.com, run by
 <b>Mindstorm Unlimited LLC</b> (Florida, USA). The open-source package phones home to nothing
 and collects nothing; this policy is about the hosted service only.</p>
@@ -200,10 +201,10 @@ through <b>Cloudflare</b>, which terminates HTTPS at its edge; like every site C
 fronts, it sees your requests in plaintext for the instant it takes to forward them. Our email
 is sent through <b>AgentMail</b>. If you ever pay, <b>Stripe</b> handles the card. Those four are
 the only third parties that touch anything of yours, and each sees only what its job needs.</p>
-<p><b>Encryption.</b> Everything between you and the server is encrypted in transit. At rest,
-the disk your node lives on is not yet encrypted; your files are readable only by the service
-process, in a directory nobody else on the server can open, and nightly backups stay on the
-same machine under the same permissions.</p>
+<p><b>Encryption.</b> Everything between you and the server is encrypted in transit.
+At rest, your node lives on an encrypted volume, and every nightly backup is encrypted
+before it is written, with a key that is not kept on the server. Your files are readable
+only by the service process, in a directory nobody else on the server can open.</p>
 <p><b>"Encrypted from you?"</b> Not on the hosted service. A server that cannot read your
 entries cannot search them, and searching is what you pay us for. If you need us to be unable
 to read your data, run the package yourself: same code, your disk, your keys. That is not a

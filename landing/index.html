@@ -92,17 +92,17 @@
   <p>Not a personal AI agent — it's the journal your agents share, not an agent itself. Not a vector database — no embeddings by default, ever. Not a kitchen-sink platform — no schedulers, no gateways, no built-in LLM. Not telemetric — the package phones home to nothing. The substrate is small on purpose; agents bring their own everything else.</p>
 
   <h2>no lock-in, ever</h2>
-  <p>The data is a SQLite file. Download it, open it in any SQLite tool, point your own server at it, copy it to another machine, fork the code, walk away. Exit cost is <code>cp</code> of one file. The eventual hosted service runs the same open-source package you can pip-install — convenience is the product, never the algorithm.</p>
+  <p>The data is a SQLite file. Download it, open it in any SQLite tool, point your own server at it, copy it to another machine, fork the code, walk away. Exit cost is <code>cp</code> of one file. The hosted service runs the same open-source package you can read, vendor or fork — convenience is the product, never the algorithm.</p>
 
   <h2>two ways to run it</h2>
   <div class="mode"><b>self-hosted — free, forever</b><br>Run the package on your own machine or server. One SQLite file per node, an MCP endpoint your agents point at, your keys, your disk. If your agents live in the cloud, put your node behind whatever door you already trust (a reverse proxy, a tunnel, a VPN) — the package does not care which.</div>
-  <div class="mode"><b>hosted — open to founders</b><br>Sign up, create a node, get an MCP URL and a key, point a seat at it. Same package, same file format, our disk and our backups instead of yours. The first twenty accounts are founders: a year free. After that, a free tier for individual nodes and a paid tier for cross-node aggregation. Export is the SQLite file, always. <a href="/app/signup">Create an account</a> · <span id="founders">founder seats: counting…</span></div>
+  <div class="mode"><b>hosted — open to founders</b><br>Sign up, create your nodes, and get <b>one MCP URL and one key for the whole account</b> — every node you own, present and future, behind a single connector you point a seat at once. Same package, same file format, our disk and our backups instead of yours. The first twenty accounts are founders: a year free. After that a free tier (3 nodes, 10,000 entries each) and Pro at $8 a month or $80 a year — more nodes, more entries, higher limits, longer retention. Never a tool the free tier lacks. Export is the SQLite file, always. <a href="/app/signup">Create an account</a> · <span id="founders">founder seats: counting…</span></div>
 
   <h2>status</h2>
   <div class="status">
-    <span class="dot">●</span> <b>v3.2.0 — open source, Apache 2.0.</b> <code>pip install</code> it, vendor it, or read it: <a href="https://github.com/Jacoboon/boonyard">github.com/Jacoboon/boonyard</a>. Stdlib only, 277 tests, 22 CLI commands, 18 MCP tools.<br>
+    <span class="dot">●</span> <b>v3.5.0 — open source, Apache 2.0.</b> Vendor it or read it: <a href="https://github.com/Jacoboon/boonyard">github.com/Jacoboon/boonyard</a>. Stdlib only, zero runtime dependencies, 360 tests, 24 CLI commands, 20 MCP tools (15 at the read-only aggregate door).<br>
     <span class="dot">●</span> <b>Six live nodes since July 2026</b>, written to daily by human and AI seats across the author's projects — the substrate is dogfooded before it is sold.<br>
-    <span class="dot">●</span> <b>Hosted service: open to founders.</b> <a href="/app/signup">Sign up</a> — <span id="founders-status">counting seats…</span>. The design canon (charter, 10 ADRs, 9 architecture docs) is public in the repo; the first hosted user was the author.
+    <span class="dot">●</span> <b>Hosted service: open to founders.</b> <a href="/app/signup">Sign up</a> — <span id="founders-status">counting seats…</span>. The design canon (charter, 14 ADRs, 9 architecture docs) is public in the repo; the first hosted user was the author.
   </div>
 
   <footer>

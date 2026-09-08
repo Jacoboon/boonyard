@@ -38,8 +38,16 @@ class LegalTextTests(unittest.TestCase):
         self.assertIn("by email to hello@boonyard.com (a dashboard button is coming)", TERMS_HTML)
         self.assertIn("courts located in Florida.", TERMS_HTML)
         self.assertIn("up to 7 days", PRIVACY_HTML)
-        self.assertIn("not yet encrypted", PRIVACY_HTML)  # the [TODAY] sentence
-        self.assertNotIn("encrypted volume", PRIVACY_HTML)  # never the [AFTER TIER 1] one
+        # 2026-09-08: the [TODAY] sentence was retired when Tier 1 went live and the
+        # Conductor discharged the fence (umbrella #392). The page had been UNDERSTATING
+        # since 17:54 the previous day — the right direction to be wrong in, and still wrong.
+        self.assertNotIn("not yet encrypted", PRIVACY_HTML)
+        self.assertIn("your node lives on an encrypted volume", PRIVACY_HTML)
+        self.assertIn("with a key that is not kept on the server", PRIVACY_HTML)
+        # This was the guard against flipping EARLY — the page must never claim encryption
+        # it does not have. It is inverted rather than deleted, so the pair still pins the
+        # page to exactly one of the two states and never to neither or both.
+        self.assertNotIn("is not yet encrypted", PRIVACY_HTML)
         self.assertIn("rolled up to counts after 180 days", PRIVACY_HTML)
         self.assertIn("one hour", PRIVACY_HTML)
         self.assertIn("holding area", PRIVACY_HTML)
