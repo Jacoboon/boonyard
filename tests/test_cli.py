@@ -263,19 +263,30 @@ class DocsMatchTheCodeTests(unittest.TestCase):
 
     ROOT = Path(__file__).resolve().parents[1]
 
+    #: EVERY file a stranger reads. The first version of this guard covered README.md
+    #: alone, and the landing page — the actual front door — drifted to a stale version
+    #: the same hour, which is the whole lesson twice over: a guard scoped to one surface
+    #: is a guard that quietly certifies the others as unchecked.
+    PUBLIC_SURFACES = ("README.md", "landing/index.html")
+
     def _read(self, name):
         return (self.ROOT / name).read_text(encoding="utf-8")
 
-    def test_the_readme_states_the_version_the_package_reports(self):
+    def _all_surfaces(self, pattern):
+        return {m for n in self.PUBLIC_SURFACES for m in re.findall(pattern, self._read(n))}
+
+    def test_every_public_surface_states_the_version_the_package_reports(self):
         from boonyard import __version__
 
-        found = set(re.findall(r"v(\d+\.\d+\.\d+)", self._read("README.md")))
-        self.assertTrue(found, "the README no longer states a version")
-        self.assertEqual(
-            found,
-            {__version__},
-            f"README says {sorted(found)}, package reports {__version__}",
-        )
+        for name in self.PUBLIC_SURFACES:
+            with self.subTest(surface=name):
+                found = set(re.findall(r"v(\d+\.\d+\.\d+)", self._read(name)))
+                self.assertTrue(found, f"{name} no longer states a version")
+                self.assertEqual(
+                    found,
+                    {__version__},
+                    f"{name} says {sorted(found)}, package reports {__version__}",
+                )
 
     def test_pyproject_states_the_version_the_package_reports(self):
         import tomllib
@@ -288,14 +299,14 @@ class DocsMatchTheCodeTests(unittest.TestCase):
     def test_the_readme_tool_count_matches_the_tool_list(self):
         from boonyard.mcp import TOOL_DEFS
 
-        counts = set(re.findall(r"(\d+) tools", self._read("README.md")))
-        self.assertTrue(counts, "the README no longer states a tool count")
+        counts = self._all_surfaces(r"(\d+) tools")
+        self.assertTrue(counts, "no public surface states a tool count")
         self.assertIn(str(len(TOOL_DEFS)), counts)
 
     def test_the_readme_adr_count_matches_the_adr_directory(self):
         on_disk = len(list((self.ROOT / "docs" / "adr").glob("0*.md")))
-        counts = {int(c) for c in re.findall(r"(\d+) ADRs", self._read("README.md"))}
-        self.assertEqual(counts, {on_disk}, f"README says {counts}, disk has {on_disk}")
+        counts = {int(c) for c in self._all_surfaces(r"(\d+) ADRs")}
+        self.assertEqual(counts, {on_disk}, f"surfaces say {counts}, disk has {on_disk}")
 
     def test_the_readme_test_count_matches_the_suite(self):
         """The one number that changes on almost every commit, and therefore the one
@@ -304,11 +315,11 @@ class DocsMatchTheCodeTests(unittest.TestCase):
         import unittest as _u
 
         total = _u.TestLoader().discover(str(self.ROOT / "tests"), top_level_dir=str(self.ROOT))
-        counts = {int(c) for c in re.findall(r"(\d+) tests", self._read("README.md"))}
+        counts = {int(c) for c in self._all_surfaces(r"(\d+) tests")}
         self.assertEqual(
             counts,
             {total.countTestCases()},
-            f"README says {counts}, the suite has {total.countTestCases()}",
+            f"surfaces say {counts}, the suite has {total.countTestCases()}",
         )
 
     def test_the_changelog_has_an_entry_for_this_version(self):
