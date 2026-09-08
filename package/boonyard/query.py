@@ -140,6 +140,21 @@ def search_by_tag_exact(
     return [_row_to_entry(r) for r in rows]
 
 
+def _as_literal_terms(query: str) -> str:
+    """Re-quote a query so FTS5 reads every token literally, not as syntax.
+
+    Each run of word characters becomes a quoted phrase; everything else is dropped.
+    ``what's next?`` -> ``"what" "s" "next"``, which matches the way a person meant it.
+    An empty result would itself be a syntax error, so it falls back to a phrase that
+    matches nothing rather than raising from inside the recovery path.
+
+    Example:
+        _as_literal_terms("c++")  # -> '"c"'
+    """
+    terms = re.findall(r"\w+", query, flags=re.UNICODE)
+    return " ".join(f'"{t}"' for t in terms) if terms else '""'
+
+
 def search_text(
     query: str,
     limit: int = 20,
@@ -152,16 +167,29 @@ def search_text(
     Raises ``ValueError`` on malformed FTS syntax (maps to the MCP ``validation``
     error). Newest-first within the match set.
     """
+    sql = (
+        f"SELECT e.{', e.'.join(_ENTRY_COLS.split(', '))} "
+        "FROM entry e JOIN entry_fts f ON f.rowid = e.id "
+        "WHERE entry_fts MATCH ? ORDER BY e.id DESC LIMIT ?"
+    )
     with resolve_conn(conn, db_path, read_only=True) as c:
         try:
-            rows = c.execute(
-                f"SELECT e.{', e.'.join(_ENTRY_COLS.split(', '))} "
-                "FROM entry e JOIN entry_fts f ON f.rowid = e.id "
-                "WHERE entry_fts MATCH ? ORDER BY e.id DESC LIMIT ?",
-                (query, limit),
-            ).fetchall()
-        except OperationalError as exc:
-            raise ValueError(f"malformed FTS5 query {query!r}: {exc}") from exc
+            rows = c.execute(sql, (query, limit)).fetchall()
+        except OperationalError:
+            # ⚠ ORDINARY ENGLISH IS NOT FTS5 SYNTAX (2026-09-08). `what's next?` and
+            # `c++` are what people actually type, and both are syntax errors to FTS5 —
+            # so the most-used control in the product answered a normal question with
+            # `fts5: syntax error near "'"`, the search engine's own internals, on
+            # screen. Retry once with every token quoted as a literal, which is what a
+            # human meant; a deliberate operator query (`fuse AND boot`) still parses on
+            # the first attempt and never reaches this path.
+            try:
+                rows = c.execute(sql, (_as_literal_terms(query), limit)).fetchall()
+            except OperationalError as exc:
+                raise ValueError(
+                    f"could not search for {query!r} — try plain words without "
+                    f"punctuation, or FTS5 syntax like 'fuse AND boot' ({exc})"
+                ) from exc
     return [_row_to_entry(r) for r in rows]
 
 

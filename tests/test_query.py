@@ -119,11 +119,17 @@ class TextSearchTests(unittest.TestCase):
         log_entry("code", "note", "fuse only", conn=conn)
         self.assertEqual(len(search_text("fuse AND boot", conn=conn)), 1)
 
-    def test_malformed_query_raises_valueerror(self):
+    def test_a_malformed_query_is_recovered_rather_than_raised(self):
+        """⚠ CONTRACT CHANGED 2026-09-08. This used to assert that an unbalanced quote
+        raised ValueError — correct for a library, wrong for the box a human types into,
+        because the message that reached the screen was `fts5: syntax error near ...`.
+        A query FTS5 cannot parse is now retried with its tokens quoted literally, which
+        is what the person meant. Only a query with nothing searchable in it comes back
+        empty, and nothing comes back as engine internals."""
         conn = _node()
         _seed(conn)
-        with self.assertRaises(ValueError):
-            search_text('"unbalanced', conn=conn)
+        self.assertIsInstance(search_text('"unbalanced', conn=conn), list)
+        self.assertEqual(search_text("!!!", conn=conn), [])
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -433,6 +439,59 @@ class UpcomingDatesTests(unittest.TestCase):
     def test_bad_pinned_today_is_a_value_error(self):
         with self.assertRaises(ValueError):
             upcoming_dates(45, today="not-a-date", conn=self.conn)
+
+
+class SearchPunctuationTests(unittest.TestCase):
+    """Ordinary English is not FTS5 syntax (umbrella launch sweep, 2026-09-08).
+
+    `what's next?` and `c++` are what people actually type into a search box, and both
+    are syntax errors to FTS5 — so the most-used control in the product answered a
+    normal question by printing the search engine's own internals on screen.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db = Path(self._tmp.name) / "journal.db"
+        init_db(self.db, node_name="n")
+        for content in (
+            "what's next on the fuse boot?",
+            "we chose c++ over rust",
+            "the plan: ship it (soon)",
+        ):
+            log_entry("code", "note", content, db_path=self.db)
+
+    def _hits(self, q):
+        from boonyard import search_text
+
+        return search_text(q, 10, db_path=self.db)
+
+    def test_punctuation_a_human_types_finds_the_entry(self):
+        for q, expect in [
+            ("what's next?", "what's next"),
+            ("c++", "c++"),
+            ("ship it (soon)", "ship it"),
+        ]:
+            with self.subTest(query=q):
+                hits = self._hits(q)
+                self.assertTrue(hits, f"{q!r} found nothing")
+                self.assertIn(expect, hits[0]["content"])
+
+    def test_a_deliberate_fts5_query_still_parses_on_the_first_try(self):
+        self.assertTrue(self._hits("fuse AND boot"))
+        self.assertTrue(self._hits('"the plan"'))
+
+    def test_a_query_with_no_searchable_token_returns_nothing_rather_than_raising(self):
+        self.assertEqual(self._hits("???"), [])
+        self.assertEqual(self._hits(""), [])
+
+    def test_the_engines_internals_never_reach_the_message(self):
+        """If it ever does raise, it must not be `fts5: syntax error near ...`."""
+        from boonyard.query import _as_literal_terms
+
+        self.assertEqual(_as_literal_terms("c++"), '"c"')
+        self.assertEqual(_as_literal_terms("what's next?"), '"what" "s" "next"')
+        self.assertEqual(_as_literal_terms("!!!"), '""')
 
 
 if __name__ == "__main__":
