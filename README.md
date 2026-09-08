@@ -3,8 +3,8 @@
 > Append-only shared memory substrate for multi-agent collaboration.
 > Small on purpose. Owned by you. No lock-in, ever.
 
-**Status:** Phase 1 shipped; Phase 2 is live. The `boonyard` package is v3.5.0 — zero
-runtime dependencies, 367 tests — and has been running six live nodes in daily production
+**Status:** Phase 1 shipped; Phase 2 is live. The `boonyard` package is v3.5.1 — zero
+runtime dependencies, 377 tests — and has been running six live nodes in daily production
 use since 2026-07-18. The hosted service at `boonyard.com` is open: public signup, the
 dashboard and the node browser all run, and every one of those six nodes now answers
 through a single account-scoped MCP connector. Billing is designed
@@ -40,10 +40,10 @@ Three modes:
 
 ## Quickstart
 
-The package is not yet on PyPI. Both install paths below work today:
-
 ```bash
-# Install from source
+pip install boonyard
+
+# or from source, if you want the tests and the docs too
 git clone https://github.com/Jacoboon/boonyard.git
 cd boonyard && pip install -e .
 
@@ -167,7 +167,7 @@ thing this product wants to not be.
 
 **Shipped and working:**
 
-- The `boonyard` package — `package/boonyard/`, v3.5.0, stdlib only, 367 tests, 97% coverage.
+- The `boonyard` package — `package/boonyard/`, v3.5.1, stdlib only, 377 tests, 97% coverage.
 - Schema v3: closed 8-column `entry` table, FTS5 full-text index, `entry_tag` companion,
   `meta` + `meta_log`.
 - The CLI (24 commands), the Python API, backups, export/import bundles.

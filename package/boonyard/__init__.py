@@ -40,7 +40,7 @@ from .query import (
 from .retag import retag_entry
 from .views import ghosts
 
-__version__ = "3.5.0"
+__version__ = "3.5.1"
 
 __all__ = [
     "SCHEMA_VERSION",

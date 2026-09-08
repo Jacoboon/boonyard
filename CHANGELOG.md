@@ -7,6 +7,20 @@ Versioning follows [ADR-0002 / architecture 04](docs/architecture/04_distributio
 major version is the schema version.** A package on `3.x` reads and writes v3 nodes. A major
 bump means a schema rollover, never a marketing decision.
 
+## [3.5.1] — 2026-09-08
+
+Documentation only; no code change to the package's behaviour.
+
+- **Published to PyPI.** `pip install boonyard` works, so the README says so. 3.5.0's
+  description — which is immutable on the index — still said "The package is not yet on
+  PyPI", which was true when it was built and false ninety seconds later.
+- Search no longer prints the search engine's internals. `what's next?` and `c++` are
+  syntax errors to FTS5; a query it cannot parse is retried with its tokens quoted
+  literally, and a deliberate `fuse AND boot` still parses on the first attempt.
+- The CLI no longer prints soft-validation warnings twice, and the README's own
+  quickstart no longer uses an agent a brand-new node does not know.
+- `busy_timeout` is pinned explicitly rather than inherited from a module default.
+
 ## [3.5.0] — 2026-09-07
 
 **Breaking at multi-node doors only. Single-node doors are untouched — no new argument,

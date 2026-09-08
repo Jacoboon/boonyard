@@ -251,6 +251,72 @@ class FirstRunTests(unittest.TestCase):
         self.assertTrue(any("unknown agent" in line for line in caught.output))
 
 
+class DocsMatchTheCodeTests(unittest.TestCase):
+    """Kill the class, not the instance.
+
+    Four times on 2026-09-08 a public surface stated a version, a test count or a tool
+    count that had been true when it was written and was false by the time anyone read
+    it — twice in the same file, twice by my own hand, once within ninety seconds of a
+    release. A hand-maintained number in prose drifts by construction. These tests do not
+    prevent the drift; they make it impossible to ship.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def _read(self, name):
+        return (self.ROOT / name).read_text(encoding="utf-8")
+
+    def test_the_readme_states_the_version_the_package_reports(self):
+        from boonyard import __version__
+
+        found = set(re.findall(r"v(\d+\.\d+\.\d+)", self._read("README.md")))
+        self.assertTrue(found, "the README no longer states a version")
+        self.assertEqual(
+            found,
+            {__version__},
+            f"README says {sorted(found)}, package reports {__version__}",
+        )
+
+    def test_pyproject_states_the_version_the_package_reports(self):
+        import tomllib
+
+        from boonyard import __version__
+
+        data = tomllib.loads(self._read("pyproject.toml"))
+        self.assertEqual(data["project"]["version"], __version__)
+
+    def test_the_readme_tool_count_matches_the_tool_list(self):
+        from boonyard.mcp import TOOL_DEFS
+
+        counts = set(re.findall(r"(\d+) tools", self._read("README.md")))
+        self.assertTrue(counts, "the README no longer states a tool count")
+        self.assertIn(str(len(TOOL_DEFS)), counts)
+
+    def test_the_readme_adr_count_matches_the_adr_directory(self):
+        on_disk = len(list((self.ROOT / "docs" / "adr").glob("0*.md")))
+        counts = {int(c) for c in re.findall(r"(\d+) ADRs", self._read("README.md"))}
+        self.assertEqual(counts, {on_disk}, f"README says {counts}, disk has {on_disk}")
+
+    def test_the_readme_test_count_matches_the_suite(self):
+        """The one number that changes on almost every commit, and therefore the one
+        most certain to drift. Counting is deterministic, so it can be pinned like the
+        rest — including this test, which is part of the count it asserts."""
+        import unittest as _u
+
+        total = _u.TestLoader().discover(str(self.ROOT / "tests"), top_level_dir=str(self.ROOT))
+        counts = {int(c) for c in re.findall(r"(\d+) tests", self._read("README.md"))}
+        self.assertEqual(
+            counts,
+            {total.countTestCases()},
+            f"README says {counts}, the suite has {total.countTestCases()}",
+        )
+
+    def test_the_changelog_has_an_entry_for_this_version(self):
+        from boonyard import __version__
+
+        self.assertIn(f"## [{__version__}]", self._read("CHANGELOG.md"))
+
+
 class UmbrellaTests(unittest.TestCase):
     def test_umbrella_init_add_list_recent(self):
         with tempfile.TemporaryDirectory() as d:
