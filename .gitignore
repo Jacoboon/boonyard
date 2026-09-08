@@ -3,6 +3,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+build/
 dist/
 *.egg-info/
 # Boonyard's own live node (M8) — the node is a live artifact; data never goes in git.

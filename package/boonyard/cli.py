@@ -11,6 +11,7 @@ nothing); 2 a usage / validation error.
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -719,6 +720,17 @@ def _force_utf8_output() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``boonyard`` command. Returns a process exit code."""
     _force_utf8_output()
+    # ⚠ THE CLI OWNS OUTPUT, SO IT OWNS THE LOGGER (2026-09-08). Library code may not
+    # print (CLAUDE.md), so soft-validation warnings go out through ``_log.warning`` —
+    # and with no handler configured, Python's last-resort handler puts every one of
+    # them on stderr as well. The result was that a newcomer's FIRST `boonyard log`
+    # printed the same warning twice, once bare and once prefixed. The CLI already
+    # surfaces these itself from ``warnings_out``, so it silences the duplicate here
+    # rather than the library dropping a channel its embedders rely on.
+    _log = logging.getLogger("boonyard")
+    if not any(isinstance(h, logging.NullHandler) for h in _log.handlers):
+        _log.addHandler(logging.NullHandler())  # guarded: main() may be called many times
+    _log.propagate = False
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

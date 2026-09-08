@@ -49,10 +49,16 @@ cd boonyard && pip install -e .
 
 cd ~/Code/my-project
 boonyard init --name my-project
-boonyard log opus decision "Starting work on X"
+boonyard log code decision "Starting work on X"
 boonyard recent 5
 boonyard mcp --port 8765 &        # MCP doorway for AI seats
 ```
+
+`code` there is an *agent* — the name of the seat doing the writing. A new node knows
+`code`, `cowork`, `chat`, `professor` and `system`; edit `boonyard.toml` to name your own.
+Write as an agent it does not know and it warns and **still writes it** — the substrate
+captures, validators advise. That is soft validation, and it applies to entry types and tag
+namespaces too.
 
 Or vendor it — stdlib-only, zero deps, so copying the folder in is a supported path, not a
 hack:

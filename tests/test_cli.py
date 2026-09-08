@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -200,6 +201,54 @@ class ErrorHandlingTests(CliTestCase):
     def test_retag_missing_reason_is_argparse_error(self):
         # argparse enforces required --reason before our handler runs.
         self.assertEqual(_help_exit_code(["--db", self.db, "retag", "1", "new", "--actor", "x"]), 2)
+
+
+class FirstRunTests(unittest.TestCase):
+    """The first two commands a stranger types, and the first thing they see.
+
+    Both of these were wrong on 2026-09-08 and both were found by RUNNING the README
+    rather than reading it: the documented example used an agent the default profile
+    does not know, so a newcomer's first write warned — and the warning printed TWICE,
+    once from the library's logger reaching Python's last-resort stderr handler and once
+    from the CLI's own printer.
+    """
+
+    def test_the_readme_quickstart_uses_an_agent_a_new_node_knows(self):
+        from boonyard.profile import load_profile
+
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        example = re.search(r"^boonyard log (\S+) ", readme, re.M)
+        self.assertIsNotNone(example, "the README no longer shows a `boonyard log` example")
+        known = load_profile(None).allowed_agents
+        self.assertIn(
+            example.group(1),
+            known,
+            "the README's first log example must not warn on a brand-new node",
+        )
+
+    def test_a_soft_warning_is_printed_exactly_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "journal.db")
+            run(["--db", db, "init", "--name", "n"])
+            _, _, err = run(["--db", db, "log", "nobody-knows-me", "note", "hi"])
+        self.assertEqual(err.count("unknown agent"), 1, f"not emitted once: {err!r}")
+        self.assertIn("warning: unknown agent", err)
+
+    def test_the_library_still_logs_for_embedders(self):
+        """The CLI silences the duplicate; it must not remove the channel a library
+        consumer relies on. log_entry still fills warnings_out and still logs."""
+        import logging as _logging
+
+        from boonyard import init_db, log_entry
+
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "journal.db"
+            init_db(db, node_name="n")
+            warns: list[str] = []
+            with self.assertLogs("boonyard", level=_logging.WARNING) as caught:
+                log_entry("nobody", "note", "hi", db_path=db, warnings_out=warns)
+        self.assertTrue(any("unknown agent" in w for w in warns))
+        self.assertTrue(any("unknown agent" in line for line in caught.output))
 
 
 class UmbrellaTests(unittest.TestCase):
