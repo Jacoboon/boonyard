@@ -88,6 +88,32 @@ def add_key(
     return registry.create_key(user, node, label=label)
 
 
+def add_account_key(
+    registry: Registry, user_slug: str, *, label: str | None = None
+) -> tuple[str, ApiKey]:
+    """``key add-account``: mint one key for EVERY node this account owns (ADR-0014).
+
+    Present and future: a node created tomorrow is reachable through the same
+    connector with no re-configuration, because the router builds the node map per
+    request. Revoking this key cuts access to every node at once — say so wherever it
+    is minted (ADR-0014 §8).
+
+    Example:
+        raw, key = add_account_key(reg, "jacoboon", label="laptop")
+    """
+    user = _require_user(registry, user_slug)
+    return registry.create_account_key(user, label=label)
+
+
+def account_key_url(public_base: str, user_slug: str) -> str:
+    """The account door's URL. Header auth only — no capability form (ADR-0014 §2.2).
+
+    Example:
+        account_key_url("https://mcp.boonyard.com", "jacoboon")
+    """
+    return f"{public_base.rstrip('/')}/{user_slug}"
+
+
 def revoke_key(registry: Registry, key_id: str) -> ApiKey:
     """``key revoke``: revoke by id; the row is kept for audit (arch 05).
 

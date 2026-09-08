@@ -471,6 +471,48 @@ class Registry:
             self._write_keys(user.user_id, store)
         return raw, key
 
+    def account_scope(self, user: User) -> str:
+        """The scope string an account-wide key carries (ADR-0014 §2)."""
+        return f"user:{user.user_id}"
+
+    def create_account_key(self, user: User, *, label: str | None = None) -> tuple[str, ApiKey]:
+        """Mint a key scoped to the whole ACCOUNT — every node, present and future.
+
+        Same storage as a node key (``bnyk_`` prefix, sha256 at rest, raw returned
+        once, revocable): only the scope differs, which is why this is a new value in
+        an existing field and not a schema change (ADR-0008 anticipated
+        ``aggregator:{ids}``).
+
+        ⚠ Revoking one of these cuts access to EVERY node at once — a feature when a
+        laptop is lost, a risk when a finger slips (ADR-0014 §8). Whoever mints one is
+        expected to say so where it is minted.
+
+        Example:
+            raw, key = reg.create_account_key(user, label="laptop")
+        """
+        raw = mint_key()
+        key = ApiKey(
+            key_id=str(uuid.uuid4()),
+            hashed_secret=hash_key(raw),
+            scope=self.account_scope(user),
+            label=label,
+            created_at=_now(),
+            last_used_at=None,
+            revoked_at=None,
+        )
+        with self._lock:
+            store = self._read_keys(user.user_id)
+            store["keys"].append(asdict(key))
+            self._write_keys(user.user_id, store)
+        return raw, key
+
+    def list_account_keys(self, user: User) -> list[ApiKey]:
+        """Every account-scoped key of ``user`` (live and revoked), oldest first."""
+        scope = self.account_scope(user)
+        return [
+            ApiKey(**row) for row in self._read_keys(user.user_id)["keys"] if row["scope"] == scope
+        ]
+
     def authenticate(self, user: User, presented: str | None) -> ApiKey | None:
         """The live key of ``user`` matching ``presented``, or None.
 

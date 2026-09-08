@@ -123,6 +123,31 @@ def make_server(
     )
 
 
+def make_account_server(
+    nodes: dict[str, str | Path],
+    *,
+    meter_path: str | Path,
+) -> MCPServer:
+    """One ``MCPServer`` over every node an account key reaches (ADR-0014).
+
+    The map is built per request by the router, never cached, so a node created a
+    minute ago is reachable through the same connector with no restart — that is the
+    promise the ADR is named for. Writes go to the node the call names; reads that
+    name none span the map. Each node's own ``boonyard.toml`` and ``meter.db`` are
+    found beside its file by the package, so a call through this door behaves exactly
+    as the same call through that node's own door (ADR-0006).
+
+    Example:
+        make_account_server({"test-0": "…/test-0/journal.db"},
+                            meter_path="…/users/<id>/meter.db")
+    """
+    return MCPServer(
+        nodes={slug: str(path) for slug, path in nodes.items()},
+        api_key=None,
+        meter_path=str(meter_path),
+    )
+
+
 def call_tool(server: MCPServer, name: str, **arguments) -> dict | list:
     """Call one MCP tool in-process and return its JSON payload (the node browser's engine).
 

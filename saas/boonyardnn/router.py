@@ -128,25 +128,45 @@ class Router:
         self._limits = dict(RATE_LIMITS if limits is None else limits)
         self._limiter = RateLimiter(burst=burst, clock=clock)
         self._entry_cap = entry_cap
+        self.last_node_map_ms = 0.0
 
     # -- path -----------------------------------------------------------------
     @staticmethod
-    def parse_path(path: str) -> tuple[str, str, str | None] | None:
-        """``/{user}/{node}[/sse|/http][/{key}]`` -> ``(user, node, key_or_None)``, else None.
+    def parse_path(path: str) -> tuple[str, str | None, str | None] | None:
+        """``/{user}`` or ``/{user}/{node}[/sse|/http][/{key}]`` -> ``(user, node, key)``.
 
-        Both slugs must pass the slug rule (so ``..`` and uppercase never reach the
-        filesystem); anything else in the path is a 404. The query string is ignored.
+        Returns ``None`` (→ 404) for anything else. Slugs must pass the slug rule, so
+        ``..`` and uppercase never reach the filesystem; the query string is ignored.
+
+        ⚠ THE ACCOUNT DOOR IS HEADER-AUTH ONLY (ADR-0014, order §2.2 / B2). A
+        capability URL there would be ``/{user}/{key}`` — two parts, colliding with
+        ``/{user}/{node}``. The ``bnyk_`` underscore makes the two *technically*
+        separable and that is exactly the cleverness that yields an unexplainable 404
+        at 2am. The claude.ai connector dialog has had a header field since boonyard
+        #342, so the form costs nothing to drop. Per-node endpoints keep it.
 
         Example:
+            Router.parse_path("/jacoboon")                 # -> ("jacoboon", None, None)
             Router.parse_path("/jacoboon/test-0/bnyk_abc")  # -> ("jacoboon", "test-0", "bnyk_abc")
         """
         parts = [p for p in path.split("?", 1)[0].split("/") if p]
         if len(parts) > 2 and parts[2] in _TRANSPORT_SUFFIXES:
             del parts[2]
-        if len(parts) not in (2, 3):
+        elif len(parts) == 2 and parts[1] in _TRANSPORT_SUFFIXES:
+            # ``/{user}/sse`` is the account door as ADR-0008 spells endpoints. The cost
+            # is that a node slugged exactly "sse" or "http" is unreachable at the
+            # two-part form; it stays reachable at ``/{user}`` with node: "sse".
+            del parts[1]
+        if not parts or len(parts) > 3:
             return None
         try:
-            user, node = validate_slug(parts[0]), validate_slug(parts[1])
+            user = validate_slug(parts[0])
+        except SlugError:
+            return None
+        if len(parts) == 1:
+            return user, None, None
+        try:
+            node = validate_slug(parts[1])
         except SlugError:
             return None
         return user, node, (parts[2] if len(parts) == 3 else None)
@@ -176,6 +196,22 @@ class Router:
             "users": counts["users"],
             "nodes": counts["nodes"],
         }
+
+    def _over_cap(self, user, node, tier: str, kind: str) -> bool:
+        """ADR-0007 / arch 07: Free holds 10,000 entries per node; writes then refuse."""
+        if kind != "write" or tier != "free" or self._entry_cap is None:
+            return False
+        return adapter.entry_count(self._registry.node_dir(user, node) / "journal.db") >= (
+            self._entry_cap
+        )
+
+    def _cap_refused(self) -> Response:
+        return self._error(
+            403,
+            "quota_exceeded",
+            f"the free plan holds {self._entry_cap} entries per node; "
+            "export the node, or start another",
+        )
 
     def handle_get(self, path: str) -> Response:
         """GET: ``/health`` → 200; everything else → 405 (the package's stance: no SSE stream)."""
@@ -207,15 +243,30 @@ class Router:
         user = self._registry.get_user(user_slug)
         if user is None:
             return self._not_found()
-        node = self._registry.get_node(user, node_slug)
-        if node is None:
-            return self._not_found()
+        account_door = node_slug is None
+        node = None
+        if not account_door:
+            node = self._registry.get_node(user, node_slug)
+            if node is None:
+                return self._not_found()
 
         presented = _bearer(headers) or path_key
         key = self._registry.authenticate(user, presented) if presented else None
         if key is None:
             return self._error(401, "not_authenticated", "not authenticated")
-        if key.scope != f"node:{node.node_id}":
+        account_scope = self._registry.account_scope(user)
+        if account_door:
+            # ADR-0014 §9: an account key is a superset and works at either door; a NODE
+            # key here is refused rather than silently degraded to its one node, because
+            # degrading it would teach the wrong model of what this door is.
+            if key.scope != account_scope:
+                return self._error(
+                    403,
+                    "not_authorized",
+                    "this key is scoped to a single node; use it at /{user}/{node}, "
+                    "or mint an account key for this door",
+                )
+        elif key.scope not in (f"node:{node.node_id}", account_scope):
             return self._error(403, "not_authorized", "key is not authorized for this node")
         if user.status != "active":
             return self._error(403, "not_authorized", "user is not active")
@@ -227,36 +278,54 @@ class Router:
         if not isinstance(request, dict):
             return self._error(400, "validation", "parse error", code=-32700)
 
-        # ADR-0008 rate limits (per key, per kind) and ADR-0007's hard Free quota.
-        tool = ""
-        if request.get("method") == "tools/call":
-            tool = str((request.get("params") or {}).get("name") or "")
+        # ADR-0008 rate limits and ADR-0007's hard Free quota.
+        params = request.get("params") or {}
+        tool = str(params.get("name") or "") if request.get("method") == "tools/call" else ""
         kind = "write" if tool in WRITE_TOOLS else "read"
+        # ADR-0011 §1 is the one authority for tier. Its `effective_tier(account, now)`
+        # is not implemented yet (billing is not built), and `tier_of` is the single
+        # function every reader here calls — so this calls it rather than re-deriving a
+        # tier locally, which is the rule the ADR actually exists to enforce.
         tier = tier_of(user.plan)
         writes, reads = self._limits.get(tier, self._limits["free"])
-        wait = self._limiter.take(key.key_id, kind, writes if kind == "write" else reads)
+        # ADR-0014 §7: an ACCOUNT key's bucket is the account, so minting more keys
+        # cannot multiply a tier's ceiling. Per-node keys keep ADR-0008's per-key bucket.
+        bucket = account_scope if key.scope == account_scope else key.key_id
+        wait = self._limiter.take(bucket, kind, writes if kind == "write" else reads)
         if wait:
+            per = "account" if bucket == account_scope else "key"
             status, payload, _ = self._error(
                 429,
                 "rate_limited",
                 f"rate limit: {tier} tier allows {writes} writes and "
-                f"{reads} reads per minute per key; retry in {wait}s",
+                f"{reads} reads per minute per {per}; retry in {wait}s",
             )
             return status, payload, {"Retry-After": str(wait)}
-        node_dir = self._registry.node_dir(user, node)
-        if kind == "write" and tier == "free" and self._entry_cap is not None:
-            if adapter.entry_count(node_dir / "journal.db") >= self._entry_cap:
-                return self._error(
-                    403,
-                    "quota_exceeded",
-                    f"the free plan holds {self._entry_cap} entries per "
-                    "node; export the node, or start another",
-                )
-        server = adapter.make_server(
-            node_dir / "journal.db",
-            profile_path=node_dir / "boonyard.toml",
-            meter_path=node_dir / "meter.db",
-        )
+
+        if account_door:
+            # §2.4 — BUILT PER REQUEST, never cached: a node created a minute ago must be
+            # reachable through the same connector with no restart. That is the promise
+            # ADR-0014 is named for, and a startup-time map would quietly break it.
+            started = time.perf_counter()
+            owned = self._registry.list_nodes(user)
+            nodes = {n.slug: str(self._registry.node_dir(user, n) / "journal.db") for n in owned}
+            self.last_node_map_ms = (time.perf_counter() - started) * 1000.0
+            written_to = params.get("arguments", {}).get("node") if kind == "write" else None
+            target = next((n for n in owned if n.slug == written_to), None)
+            if target is not None and self._over_cap(user, target, tier, kind):
+                return self._cap_refused()
+            server = adapter.make_account_server(
+                nodes, meter_path=self._registry.user_dir(user) / "meter.db"
+            )
+        else:
+            if self._over_cap(user, node, tier, kind):
+                return self._cap_refused()
+            node_dir = self._registry.node_dir(user, node)
+            server = adapter.make_server(
+                node_dir / "journal.db",
+                profile_path=node_dir / "boonyard.toml",
+                meter_path=node_dir / "meter.db",
+            )
         response = server.handle(request)
 
         # Hygiene, not audit: coarse, and a failed touch must not fail the call (§2.1).

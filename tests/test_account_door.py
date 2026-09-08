@@ -118,6 +118,18 @@ class ConstructionTests(NodeMapCase):
             MCPServer(nodes=self.nodes)
         self.assertIn("meter_path", str(caught.exception))
 
+    def test_an_account_with_no_nodes_yet_is_a_working_empty_door(self):
+        """A founder who just signed up has zero nodes. That must not be an error.
+
+        `if nodes` instead of `if nodes is not None` sent an empty map into single-node
+        mode with no db_path, and every call came back as an internal error.
+        """
+        server = MCPServer(nodes={}, meter_path=self.meter)
+        self.assertEqual(server._mode, "nodes")
+        self.assertEqual(_call(server, "list_nodes"), [])
+        error = _error(server, "log_entry", agent="code", entry_type="note", content="x", node="a")
+        self.assertIn("no nodes yet", error["message"])
+
     def test_single_node_mode_is_unchanged(self):
         server = MCPServer(db_path=self.nodes["alpha"])
         self.assertFalse(server._read_only)

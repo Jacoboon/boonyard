@@ -5,8 +5,9 @@
                                      node add <user> <node> [--profile TOML]
                                      node list <user>
                                      key add <user> <node> [--label L]
+                                     key add-account <user> [--label L]
                                      key revoke <key_id>
-                                     key list <user> <node>
+                                     key list <user> [<node>]
                                      export <user> <node>
                                      serve [--host H] [--port P]
                                      serve-web [--host H] [--port P]
@@ -161,14 +162,34 @@ def cmd_key(args) -> int:
         print(f"                 Authorization: Bearer {raw}")
         print(f"capability URL:  {urls['capability']}")
         return EXIT_OK
+    if args.key_cmd == "add-account":
+        raw, key = provisioner.add_account_key(reg, args.user, label=args.label)
+        print(f"key_id:  {key.key_id}")
+        print(f"label:   {key.label or '-'}")
+        print(f"scope:   {key.scope}")
+        print(f"account: {args.user} — EVERY node, present and future")
+        print()
+        print(f"  {raw}")
+        print()
+        print("Shown ONCE. Store it now: only its sha256 is kept, and it cannot be recovered.")
+        print("Revoking this key cuts access to every node at once (ADR-0014 §8).")
+        print()
+        print(f"URL:             POST {provisioner.account_key_url(_public_base(), args.user)}")
+        print(f"                 Authorization: Bearer {raw}")
+        print("                 (header auth only at this door — no capability URL form)")
+        print("Writes must name their node: log_entry(..., node='<slug>'); see list_nodes.")
+        return EXIT_OK
     if args.key_cmd == "revoke":
         key = provisioner.revoke_key(reg, args.key_id)
         print(f"revoked key {key.key_id} (revoked_at {key.revoked_at})")
         return EXIT_OK
     if args.key_cmd == "list":
         user = provisioner._require_user(reg, args.user)
-        node = provisioner._require_node(reg, user, args.node)
-        keys = reg.list_keys(user, node)
+        if args.node is None:
+            keys = reg.list_account_keys(user)
+        else:
+            node = provisioner._require_node(reg, user, args.node)
+            keys = reg.list_keys(user, node)
         if not keys:
             print("(no keys)")
             return EXIT_OK
@@ -349,11 +370,16 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("user")
     a.add_argument("node")
     a.add_argument("--label")
+    aa = ks.add_parser(
+        "add-account", help="mint an ACCOUNT key — every node, one connector (ADR-0014)"
+    )
+    aa.add_argument("user")
+    aa.add_argument("--label")
     r = ks.add_parser("revoke", help="revoke a key by id (row kept for audit)")
     r.add_argument("key_id")
-    ls = ks.add_parser("list", help="a node's keys: labels and dates, never hashes")
+    ls = ks.add_parser("list", help="a node's keys, or the account's when no node is named")
     ls.add_argument("user")
-    ls.add_argument("node")
+    ls.add_argument("node", nargs="?")
     p.set_defaults(func=cmd_key)
 
     p = sub.add_parser("export", help="export bundle into the user's exports/ (no lock-in)")

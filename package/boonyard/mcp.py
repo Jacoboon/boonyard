@@ -311,13 +311,16 @@ class MCPServer:
                 + (f" (got {', '.join(given)})" if given else " (got none)")
             )
         self._db = db_path
-        self._nodes = {str(k): str(v) for k, v in nodes.items()} if nodes else None
+        # `is not None`, never truthiness: an account with ZERO nodes is a real state
+        # (a founder who just signed up), and an empty map must give a working, empty
+        # door rather than falling through to single-node mode with no db_path.
+        self._nodes = {str(k): str(v) for k, v in nodes.items()} if nodes is not None else None
         # In nodes mode the aggregator is OURS, built over the same map, and it exists
         # only to serve reads that span nodes. A write never touches it.
         self._agg = (
             aggregator
             if aggregator is not None
-            else (_aggregator_factory(nodes=self._nodes) if self._nodes else None)
+            else (_aggregator_factory(nodes=self._nodes) if self._nodes is not None else None)
         )
         self._profile = profile
         self._api_key = api_key
@@ -325,7 +328,9 @@ class MCPServer:
         # true in BOTH aggregator and nodes mode now, so deriving read-only from it
         # would open _aggregate to writes without a single line looking wrong.
         self._mode = (
-            "aggregator" if aggregator is not None else ("nodes" if self._nodes else "single")
+            "aggregator"
+            if aggregator is not None
+            else ("nodes" if self._nodes is not None else "single")
         )
         self._read_only = self._mode == "aggregator"
         # The meter (umbrella #228 Layer 3) lives beside the node it measures. With no
@@ -430,9 +435,10 @@ class MCPServer:
         named = args.get("node")
         if isinstance(named, str) and named in self._nodes:
             return named
+        reach = ", ".join(sorted(self._nodes)) if self._nodes else "(no nodes yet)"
         raise MCPError(
             "validation",
-            f"unknown node {named!r}; this key reaches: {', '.join(sorted(self._nodes))}",
+            f"unknown node {named!r}; this key reaches: {reach}",
             hint="call list_nodes for the available nodes",
         )
 

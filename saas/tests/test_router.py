@@ -27,7 +27,6 @@ class PathParseTests(unittest.TestCase):
         p = Router.parse_path
         for bad in (
             "/",
-            "/alice",
             "/alice/n1/bnyk_a/extra",
             "/Alice/n1",
             "/../n1",
@@ -186,10 +185,14 @@ class NotFoundAndMethodTests(RouterHttpTestCase):
         self.assertEqual((s1, b1), (s2, b2))
 
     def test_malformed_path_is_404(self):
-        status, _, _ = self.served.post("/alice", rpc("tools/list"), self.bearer())
-        self.assertEqual(status, 404)
         status, _, _ = self.served.post("/", rpc("tools/list"), self.bearer())
         self.assertEqual(status, 404)
+
+    def test_a_node_key_at_the_account_door_is_refused_not_degraded(self):
+        """ADR-0014 §9. /{user} is a real endpoint now; a node key must not open it."""
+        status, body, _ = self.served.post("/alice", rpc("tools/list"), self.bearer())
+        self.assertEqual(status, 403)
+        self.assertIn("scoped to a single node", body["error"]["message"])
 
     def test_get_is_405_with_allow(self):
         status, body, headers = self.served.get("/alice/n1")
