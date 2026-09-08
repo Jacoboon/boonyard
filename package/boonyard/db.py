@@ -24,6 +24,13 @@ from .constants import SCHEMA_VERSION
 #  OR IGNORE. The entry column set is CLOSED (ADR-0002): adding a column is a
 #  new-ADR decision, never a casual edit here.
 # =====================================================================
+
+#: How long a writer waits for another writer's lock before giving up, in ms.
+#: Bounded on purpose: a caller still gets a loud "database is locked" if the
+#: holder is genuinely stuck, rather than hanging forever. Five seconds is three
+#: orders of magnitude above a normal write on this substrate.
+BUSY_TIMEOUT_MS = 5000
+
 DDL = """
 -- ---- entry: the irreducible row -----------------------------------------
 CREATE TABLE IF NOT EXISTS entry (
@@ -137,6 +144,15 @@ def _apply_pragmas(conn: sqlite3.Connection, *, read_only: bool = False) -> None
     conn.execute("PRAGMA journal_mode = WAL")  # writers don't block readers
     conn.execute("PRAGMA foreign_keys = ON")  # enforce REFERENCES entry(id)
     conn.execute("PRAGMA synchronous = NORMAL")  # durable enough; faster than FULL
+    # ⚠ WAL LETS WRITERS AND READERS COEXIST; IT DOES NOT LET TWO WRITERS COEXIST
+    # (2026-09-08, umbrella #412 item 4). SQLite's default busy_timeout is 0, so a
+    # second writer meeting the lock fails *immediately* with "database is locked"
+    # rather than waiting for a transaction that typically holds it for a millisecond.
+    # ADR-0014's account door made that a live shape rather than a theoretical one:
+    # every migrated wall now has two write paths — its own hostname and
+    # /{user} — plus two writers on its meter.db. Measured both ways in
+    # tests/test_contention.py: 0 fails on contact, this waits and wins.
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     if read_only:
         conn.execute("PRAGMA query_only = ON")  # physically incapable of writing
 

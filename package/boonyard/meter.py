@@ -32,6 +32,7 @@ from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from .db import BUSY_TIMEOUT_MS
 from .query import _coerce_today
 
 DEFAULT_METER_FILENAME = "meter.db"
@@ -81,6 +82,13 @@ def _connect(meter_path: str | Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    # ⚠ THE SIDECAR IS THE WORST PLACE TO LOSE A LOCK RACE (2026-09-08, umbrella
+    # #412 item 4). Both of a wall's doors write the SAME node's meter.db by design
+    # (boonyard #155), and every function here swallows exceptions so a broken meter
+    # can never break a read — which means a "database is locked" would be discarded
+    # in silence and the read heat would simply be missing, with nothing saying so.
+    # A bounded wait converts that silent loss into a wait measured in milliseconds.
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     conn.executescript(DDL)
     return conn
 
