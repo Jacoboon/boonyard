@@ -325,7 +325,8 @@ class WebApp:
 
     def _mail(self, req: Request, to: str, kind: str, subject: str, text: str) -> Response | None:
         """Send, or return the page that explains why not (never a stack trace)."""
-        if not self.accounts.mail_allowed(to, kind):
+        claim = self.accounts.mail_allowed(to, kind)
+        if not claim:
             return self._page(
                 "Slow down",
                 "<p>That address has had several emails from us in the last hour. "
@@ -335,6 +336,11 @@ class WebApp:
         try:
             self.mailer.send(to, subject, text)
         except MailError as exc:
+            # ⚠ HAND THE SLOT BACK. The claim is taken before the send so two concurrent
+            # requests cannot both pass; if the send then fails, keeping it would spend a
+            # real person's quota on our provider's bad minute. Five of those and the only
+            # door into the product is shut for an hour, behind a page that blames them.
+            self.accounts.mail_undo(claim)
             print(f"boonyardnn: mail failed: {type(exc).__name__}", file=sys.stderr)
             return self._page(
                 "Email not sent",

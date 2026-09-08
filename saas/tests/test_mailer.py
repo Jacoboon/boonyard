@@ -79,6 +79,34 @@ class AgentMailerTests(unittest.TestCase):
         with self.assertRaises(MailError):
             AgentMailer("k", "inbox@agentmail.to", opener=down).send("a@example.test", "s", "t")
 
+    def test_a_read_timeout_is_a_mail_error_not_an_unhandled_exception(self):
+        """⚠ THE LIKELIEST FAILURE USED TO ESCAPE THE NET (launch sweep, 2026-09-08).
+
+        Only HTTPError and URLError were caught. A read timeout after the connection is
+        established raises TimeoutError, and a dropped keep-alive raises
+        RemoteDisconnected — neither is a URLError, so both propagated past the web
+        layer (which catches only MailError) and became an unhandled exception in the
+        middle of somebody's signup, skipping the polite 503 page entirely.
+        """
+        import http.client
+
+        for boom in (
+            TimeoutError("timed out"),
+            http.client.RemoteDisconnected("closed"),
+            ConnectionResetError("reset by peer"),
+            OSError("no route to host"),
+        ):
+            with self.subTest(error=type(boom).__name__):
+
+                def raiser(req, timeout, _b=boom):
+                    raise _b
+
+                m = AgentMailer("k", "inbox@agentmail.to", opener=raiser)
+                with self.assertRaises(MailError) as ctx:
+                    m.send("a@example.test", "s", "t")
+                # the type survives into the message, so the log still says what happened
+                self.assertIn(type(boom).__name__, str(ctx.exception))
+
     def test_needs_key_and_inbox(self):
         with self.assertRaises(MailError):
             AgentMailer("", "inbox@agentmail.to")

@@ -259,3 +259,42 @@ class OperatorTests(AccountsTestCase):
     def test_store_is_private(self):
         self.assertEqual(stat.S_IMODE(os.stat(self.acc.path).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.stat(self.root / "system").st_mode), 0o700)
+
+
+class MailSlotTests(AccountsTestCase):
+    """A failed send must not spend a real person's quota (launch sweep, 2026-09-08).
+
+    The slot was claimed before the send and never handed back, so five hiccups at the
+    mail provider — none of them the user's doing, none of them reaching an inbox —
+    locked that address out of signup and sign-in for an hour, behind a page blaming
+    them for asking too often.
+    """
+
+    def test_a_claim_is_returned_by_undo(self):
+        claims = [self.acc.mail_allowed("a@example.test", "verify") for _ in range(5)]
+        self.assertTrue(all(claims))
+        self.assertFalse(self.acc.mail_allowed("a@example.test", "verify"))  # at the limit
+        self.acc.mail_undo(claims[-1])
+        self.assertTrue(self.acc.mail_allowed("a@example.test", "verify"), "slot not returned")
+
+    def test_undo_releases_exactly_its_own_row_not_a_neighbours(self):
+        first = self.acc.mail_allowed("a@example.test", "verify")
+        second = self.acc.mail_allowed("a@example.test", "verify")
+        self.acc.mail_undo(first)
+        with self.acc._connect() as conn:
+            live = [r[0] for r in conn.execute("SELECT id FROM mail_event")]
+        self.assertEqual(live, [second])
+
+    def test_undo_of_nothing_is_a_no_op(self):
+        self.acc.mail_undo(None)  # the refused path passes None; it must not explode
+
+    def test_five_consecutive_failures_do_not_lock_the_address_out(self):
+        """The exact scenario: a provider outage during five signup attempts."""
+        for _ in range(5):
+            claim = self.acc.mail_allowed("a@example.test", "verify")
+            self.assertTrue(claim)
+            self.acc.mail_undo(claim)  # the send raised MailError
+        self.assertTrue(
+            self.acc.mail_allowed("a@example.test", "verify"),
+            "an outage must not spend the user's quota",
+        )

@@ -422,3 +422,52 @@ class AccountDoorInTheDashboardTests(WebTestCase):
         _s, _h, body = self.web.get("/")
         self.assertIn(b"Nothing is connected yet", body)
         self.assertIn(b"http://mcp.test/alice", body)
+
+
+class MailOutageTests(WebTestCase):
+    """A provider outage must not close the only door into the product.
+
+    Two bugs, one symptom (launch sweep, 2026-09-08): the rate-limit slot was spent
+    before the send and never returned, and the likeliest send failure — a read timeout
+    — was not a MailError at all, so it skipped the polite page and became an unhandled
+    exception mid-signup.
+    """
+
+    def test_five_outages_do_not_lock_the_address_out_and_the_page_stays_polite(self):
+        boom = TimeoutError("read timed out")
+
+        def failing(_to, _subject, _text):
+            from boonyardnn.mailer import MailError
+
+            raise MailError(f"AgentMail send failed: {type(boom).__name__}")
+
+        good = self.web.app.mailer.send
+        self.web.app.mailer.send = failing
+        try:
+            for attempt in range(5):
+                status, _h, body = self.web.post(
+                    "/signup", {"email": "alice@example.test", "slug": f"alice{attempt}"}
+                )
+                self.assertEqual(status, 503, f"attempt {attempt}: {body[:200]}")
+                self.assertIn(b"could not send the email just now", body)
+                self.assertNotIn(b"Traceback", body)
+        finally:
+            self.web.app.mailer.send = good
+
+        # the sixth attempt, with the provider back, must still be allowed through
+        status, _h, body = self.web.post(
+            "/signup", {"email": "alice@example.test", "slug": "alice"}
+        )
+        self.assertEqual(status, 200, "the outage spent the user's quota")
+        self.assertIn(b"Check your email", body)
+
+    def test_the_limit_still_bites_when_the_mail_actually_went(self):
+        """The slot is only returned on failure — a real limit is still a limit."""
+        for attempt in range(5):
+            status, _h, _b = self.web.post(
+                "/signup", {"email": "bob@example.test", "slug": f"bob{attempt}"}
+            )
+            self.assertEqual(status, 200)
+        status, _h, body = self.web.post("/signup", {"email": "bob@example.test", "slug": "bobx"})
+        self.assertEqual(status, 429)
+        self.assertIn(b"Slow down", body)

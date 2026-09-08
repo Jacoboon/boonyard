@@ -97,6 +97,17 @@ class AgentMailer:
             raise MailError(f"AgentMail answered {err.code}") from None
         except urllib.error.URLError as err:
             raise MailError(f"AgentMail unreachable: {type(err.reason).__name__}") from None
+        except Exception as err:  # noqa: BLE001 — see below; this is the contract, not laziness
+            # ⚠ THE LIKELIEST FAILURE ESCAPED THE NET (2026-09-08, launch sweep). Only
+            # HTTPError and URLError were caught, but a READ TIMEOUT after the connection
+            # is established raises TimeoutError, and a dropped keep-alive raises
+            # RemoteDisconnected — neither is a URLError. Both propagated past the web
+            # layer, which catches only MailError, so the most ordinary provider hiccup
+            # skipped the polite 503 page and became an unhandled exception in the middle
+            # of somebody's signup. This method's contract is "sends, or raises MailError";
+            # anything else reaching a caller is a broken promise, so everything is
+            # converted here and the type is named so the log still says what happened.
+            raise MailError(f"AgentMail send failed: {type(err).__name__}") from None
 
 
 def mailer_from_env(env=None):

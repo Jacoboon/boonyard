@@ -556,12 +556,21 @@ class Accounts:
             conn.execute("DELETE FROM session WHERE session_hash = ?", (_sha256(raw_session_id),))
 
     # -- rate limits ----------------------------------------------------------
-    def mail_allowed(self, email: str, kind: str) -> bool:
-        """Record one outbound mail to ``email`` if fewer than ``MAIL_LIMIT`` went in the window.
+    def mail_allowed(self, email: str, kind: str) -> int | None:
+        """Claim one of ``email``'s ``MAIL_LIMIT`` slots. Returns the claim id, or None.
+
+        The claim is recorded BEFORE the send, so two concurrent requests cannot both
+        pass the check — but a claim whose send then fails must be handed back with
+        :meth:`mail_undo`, or a provider outage silently spends a real person's quota.
+        The id is what makes that possible: it releases exactly the row this call took,
+        never a concurrent one.
+
+        Truthy on success and None on refusal, so ``if not acc.mail_allowed(...)`` reads
+        the same as it did when this returned a bool.
 
         Example:
-            all(acc.mail_allowed("a@example.test", "verify") for _ in range(5))  # -> True
-            acc.mail_allowed("a@example.test", "verify")                          # -> False
+            claim = acc.mail_allowed("a@example.test", "verify")   # -> 1
+            acc.mail_undo(claim)                                    # the send failed
         """
         email = email.strip().lower()
         now = self.now()
@@ -572,12 +581,31 @@ class Accounts:
                 "SELECT COUNT(*) FROM mail_event WHERE email = ? AND sent_at > ?", (email, since)
             ).fetchone()[0]
             if sent >= MAIL_LIMIT:
-                return False
-            conn.execute(
+                return None
+            cur = conn.execute(
                 "INSERT INTO mail_event (email, kind, sent_at) VALUES (?, ?, ?)",
                 (email, kind, _iso(now)),
             )
-        return True
+            return int(cur.lastrowid)
+
+    def mail_undo(self, event_id: int | None) -> None:
+        """Hand back a claim whose send failed. A no-op for ``None``.
+
+        ⚠ WITHOUT THIS, A PROVIDER OUTAGE CLOSES THE ONLY DOOR INTO THE PRODUCT
+        (2026-09-08, launch sweep). The slot was spent the moment it was claimed and
+        never returned, so five failed sends — five hiccups at the mail provider, none
+        of them the user's doing and none of them reaching an inbox — locked that
+        address out of signup and sign-in for an hour, with a "slow down" page blaming
+        them for it. The limit exists to stop mail a person did not ask for; mail that
+        was never delivered is not that.
+
+        Example:
+            acc.mail_undo(acc.mail_allowed("a@example.test", "verify"))
+        """
+        if event_id is None:
+            return
+        with self._lock, self._connect() as conn:
+            conn.execute("DELETE FROM mail_event WHERE id = ?", (int(event_id),))
 
     def ip_allowed(self, ip: str, kind: str) -> bool:
         """Record one attempt from ``ip`` if fewer than ``IP_LIMIT`` happened in the window."""
