@@ -6,10 +6,21 @@ deliberately absent (arch 06 §Tools that do NOT exist): it is a privileged
 operational action, CLI/Python only, never an MCP tool an AI seat can invoke
 casually.
 
-Two modes (ADR-0008):
+Three modes (ADR-0008, extended by ADR-0014):
   * single-node — a writable node (``db_path``); this is what ships this phase.
   * aggregator  — read-only over-many (an :class:`Aggregator`); write tools return
     the ``read_only`` error.
+  * nodes       — several named nodes, WRITABLE (``nodes={slug: path}``): a call that
+    names one node is served against that node's file exactly as single-node mode
+    does; a read that names none, or several, is served by an ``Aggregator`` over
+    the same map. This is the account door (ADR-0014) and it is equally the
+    self-hoster with three local nodes (ADR-0006: the package is the SaaS).
+
+⚠ READ-ONLY IS EXPLICIT, NEVER DERIVED. It used to be ``aggregator is not None``,
+which was the entire protection on the ``_aggregate`` endpoint. ``nodes`` mode holds
+an aggregator AND permits writes, so that derivation would have made ``_aggregate``
+silently writable. The mode is set once in the constructor and the read-only flag
+follows from it; ``tests/test_account_door.py`` asserts the two modes differ.
 
 Auth is off by default (local OSS, ADR-0008); an optional ``api_key`` enables
 bearer-token checking (the per-node-key model, config-stubbed here).
@@ -18,11 +29,13 @@ The HTTP layer is ``http.server`` (ADR-0001: acceptable for local single-tenant;
 the SaaS runs a real web layer in front of the same package).
 """
 
+import copy
 import hmac
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import meter, query, views
+from .aggregator import aggregator as _aggregator_factory
 from .constants import DEFAULT_MCP_PORT
 from .log import log_entry, log_skill_revision
 from .query import search_by_tag_exact
@@ -207,6 +220,39 @@ _TOOL_NAMES = {t["name"] for t in TOOL_DEFS}
 _TOOL_REQUIRED = {t["name"]: t["inputSchema"]["required"] for t in TOOL_DEFS}
 _WRITE_TOOLS = {"log_entry", "log_skill_revision"}
 
+_NODE_ARG = {
+    "type": "string",
+    "description": "which node to write to (required at the account door; call "
+    "list_nodes for the slugs)",
+}
+
+
+def account_tool_defs(defs: list[dict] | None = None) -> list[dict]:
+    """``TOOL_DEFS`` with ``node`` REQUIRED on every write tool — derived, never retyped.
+
+    ADR-0014 §3: ``tools/list`` is answered per connection, so a server that reaches
+    several nodes advertises a different schema from one that reaches a single node.
+    Requiring ``node`` on writes is the structural half of §4's "no default node": a
+    misfile becomes a WRONG argument rather than a FORGOTTEN one, and on an
+    append-only store a misfile can only be corrected, never taken back.
+
+    The write set is ``_WRITE_TOOLS``, which is also what the read-only guard and the
+    meter's classification use — one source, so a third write tool added later cannot
+    get its ``node`` requirement in one place and not the others.
+
+    >>> [t["inputSchema"]["required"] for t in account_tool_defs()
+    ...  if t["name"] == "log_entry"]
+    [['agent', 'entry_type', 'content', 'node']]
+    """
+    out = []
+    for original in defs if defs is not None else TOOL_DEFS:
+        tool = copy.deepcopy(original)
+        if tool["name"] in _WRITE_TOOLS:
+            tool["inputSchema"]["properties"]["node"] = dict(_NODE_ARG)
+            tool["inputSchema"]["required"] = [*tool["inputSchema"]["required"], "node"]
+        out.append(tool)
+    return out
+
 
 def _dates_args(args: dict) -> dict:
     """The upcoming_dates kwargs, defaulted the same way in both server modes."""
@@ -236,29 +282,74 @@ def _tags_to_str(tags) -> str | None:
 
 
 class MCPServer:
-    """Dispatches MCP JSON-RPC requests against a node (or an aggregator).
+    """Dispatches MCP JSON-RPC requests against a node, a node map, or an aggregator.
 
-    Construct with ``db_path`` (writable single node) or ``aggregator`` (read-only
-    over-many). ``handle(request)`` is pure and testable without HTTP.
+    Construct with exactly one of ``db_path`` (writable single node), ``nodes``
+    (writable over several named nodes — ADR-0014's account door) or ``aggregator``
+    (read-only over-many). ``handle(request)`` is pure and testable without HTTP.
     """
 
     def __init__(
-        self, db_path=None, *, aggregator=None, profile=None, api_key=None, meter_path=None
+        self,
+        db_path=None,
+        *,
+        aggregator=None,
+        nodes=None,
+        profile=None,
+        api_key=None,
+        meter_path=None,
+        tool_defs=None,
     ):
-        if db_path is None and aggregator is None:
-            raise ValueError("MCPServer requires a db_path or an aggregator")
+        given = [
+            n
+            for n, v in (("db_path", db_path), ("aggregator", aggregator), ("nodes", nodes))
+            if v is not None
+        ]
+        if len(given) != 1:
+            raise ValueError(
+                "MCPServer requires exactly one of db_path, aggregator or nodes"
+                + (f" (got {', '.join(given)})" if given else " (got none)")
+            )
         self._db = db_path
-        self._agg = aggregator
+        self._nodes = {str(k): str(v) for k, v in nodes.items()} if nodes else None
+        # In nodes mode the aggregator is OURS, built over the same map, and it exists
+        # only to serve reads that span nodes. A write never touches it.
+        self._agg = (
+            aggregator
+            if aggregator is not None
+            else (_aggregator_factory(nodes=self._nodes) if self._nodes else None)
+        )
         self._profile = profile
         self._api_key = api_key
-        self._read_only = aggregator is not None
-        # The meter (umbrella #228 Layer 3) lives beside the node it measures. In
-        # aggregator mode there is no single home node, so the caller supplies one
-        # (the CLI uses the umbrella.toml's directory); without it, metering is off
-        # and read_stats says so in warnings rather than pretending to be zero.
+        # ⚠ EXPLICIT, NOT DERIVED (ADR-0014; order §0.2). `aggregator is not None` is
+        # true in BOTH aggregator and nodes mode now, so deriving read-only from it
+        # would open _aggregate to writes without a single line looking wrong.
+        self._mode = (
+            "aggregator" if aggregator is not None else ("nodes" if self._nodes else "single")
+        )
+        self._read_only = self._mode == "aggregator"
+        # The meter (umbrella #228 Layer 3) lives beside the node it measures. With no
+        # single home node — aggregator or nodes mode — the caller supplies one; without
+        # it, metering is off and read_stats says so in warnings rather than pretending
+        # to be zero.
         if meter_path is None and db_path is not None:
             meter_path = meter.default_meter_path(db_path)
+        if meter_path is None and self._mode == "nodes":
+            # Refused rather than silently unmetered: an endpoint whose meter is a no-op
+            # is this stack's recurring sin (an instrument with no reader), and it was
+            # caught once already this week on the aggregate unit (boonyard #145).
+            raise ValueError("MCPServer(nodes=…) requires a meter_path — no single home node")
         self._meter_path = meter_path
+        self._profiles: dict[str, object] = {}
+        # Per-instance tool surface (ADR-0014 §3): the module-level TOOL_DEFS stays the
+        # default; this server validates against ITS OWN set, never the module's.
+        self._tool_defs = (
+            tool_defs
+            if tool_defs is not None
+            else (account_tool_defs() if self._mode == "nodes" else TOOL_DEFS)
+        )
+        self._tool_names = {t["name"] for t in self._tool_defs}
+        self._tool_required = {t["name"]: t["inputSchema"]["required"] for t in self._tool_defs}
         self._node_name: str | None = None
         self._node_name_resolved = False
 
@@ -284,7 +375,7 @@ class MCPServer:
                     "instructions": instructions_text(),
                 }
             elif method == "tools/list":
-                result = {"tools": TOOL_DEFS}
+                result = {"tools": self._tool_defs}
             elif method == "tools/call":
                 params = request.get("params") or {}
                 payload = self._call_tool(params.get("name"), params.get("arguments") or {})
@@ -310,9 +401,54 @@ class MCPServer:
             },
         }
 
+    # -- which node is this call about? ------------------------------------
+    def _target_node(self, args: dict) -> str | None:
+        """The single node a call names, or None when it spans (ADR-0014 §1).
+
+        A call names a node with ``node`` (writes) or a ``scope`` that is one string
+        naming a node in this server's map (ADR-0008's meaning of scope, unchanged).
+        Anything else — no scope, ``'all'``, a list — spans, and spanning is the
+        aggregator's job. Returns None in every mode but ``nodes``.
+        """
+        if self._mode != "nodes":
+            return None
+        named = args.get("node")
+        if isinstance(named, str) and named in self._nodes:
+            return named
+        scope = args.get("scope")
+        if isinstance(scope, str) and scope in self._nodes:
+            return scope
+        return None
+
+    def _resolve_write_node(self, args: dict) -> str:
+        """The node a write names, or a validation error that says what IS available.
+
+        The required-parameter check already produced the missing case; this is the
+        WRONG case, and it names the slugs so a model that guessed can fix itself in
+        one turn instead of guessing again.
+        """
+        named = args.get("node")
+        if isinstance(named, str) and named in self._nodes:
+            return named
+        raise MCPError(
+            "validation",
+            f"unknown node {named!r}; this key reaches: {', '.join(sorted(self._nodes))}",
+            hint="call list_nodes for the available nodes",
+        )
+
     # -- the meter ---------------------------------------------------------
     def _meter_node(self, args: dict) -> str | None:
         """Which node this call was served against, for the meter's ``node`` column."""
+        if self._mode == "nodes":
+            # Attribution here is better than the aggregator's scope-string fallback:
+            # a write always names its node, so the meter records the node ADDRESSED.
+            target = self._target_node(args)
+            if target is not None:
+                return target
+            scope = args.get("scope")
+            if isinstance(scope, str):
+                return scope
+            return ",".join(str(s) for s in scope) if scope else "all"
         if self._agg is not None:
             scope = args.get("scope")
             if isinstance(scope, str):
@@ -343,9 +479,11 @@ class MCPServer:
 
     # -- tool dispatch -----------------------------------------------------
     def _call_tool(self, name, args: dict):
-        if name not in _TOOL_NAMES:
+        # Validated against THIS server's surface, never the module's: the account door
+        # advertises `node` as required on writes and must enforce what it advertised.
+        if name not in self._tool_names:
             raise MCPError("validation", f"unknown tool {name!r}", hint="call tools/list")
-        for field_name in _TOOL_REQUIRED[name]:
+        for field_name in self._tool_required[name]:
             if args.get(field_name) is None:
                 raise MCPError("validation", f"missing required parameter {field_name!r}")
         if self._read_only and name in _WRITE_TOOLS:
@@ -356,7 +494,21 @@ class MCPServer:
         # Counted before dispatch: an attempt that then errors is still an attempt,
         # and record() cannot raise, so this can never break the call below.
         self._meter(name, args)
-        if self._agg is not None:
+        if self._mode == "nodes":
+            # ADR-0014 §1: a call that names a node is served against that node's file,
+            # exactly as single-node mode does; a read that names none, or several, is
+            # served by the aggregator. A write ALWAYS names one.
+            if name in _WRITE_TOOLS:
+                named = self._resolve_write_node(args)
+                payload = self._call_single(name, args, db=self._nodes[named])
+            else:
+                target = self._target_node(args)
+                payload = (
+                    self._call_single(name, args, db=self._nodes[target])
+                    if target is not None
+                    else self._call_aggregator(name, args)
+                )
+        elif self._agg is not None:
             payload = self._call_aggregator(name, args)
         else:
             payload = self._call_single(name, args)
@@ -414,8 +566,36 @@ class MCPServer:
         for node, ids in by_node.items():
             meter.record_hits(self._meter_path, name, node=node, entry_ids=ids)
 
-    def _call_single(self, name, args: dict):
-        db = self._db
+    def _profile_for(self, db):
+        """The profile that governs soft validation for the node being served.
+
+        In ``nodes`` mode there is no single profile, so each node's own
+        ``boonyard.toml`` is loaded from beside its file and cached. Without this, a
+        write through the account door would be soft-validated by nothing while the
+        same write through that node's own door is validated by its profile — and
+        ADR-0006 promises the two doors behave identically.
+        """
+        if self._mode != "nodes":
+            return self._profile
+        if db not in self._profiles:
+            from pathlib import Path
+
+            from .profile import load_profile
+
+            try:
+                self._profiles[db] = load_profile(Path(db).parent / "boonyard.toml")
+            except Exception:  # noqa: BLE001 — a missing/broken profile must not block a write
+                self._profiles[db] = None
+        return self._profiles[db]
+
+    def _call_single(self, name, args: dict, *, db=None):
+        """Serve one call against ONE node file.
+
+        ``db`` is explicit in ``nodes`` mode (the node the call named) and defaults to
+        the server's own node in single-node mode.
+        """
+        db = db if db is not None else self._db
+        profile = self._profile_for(db)
         if name == "log_entry":
             new_id = log_entry(
                 args["agent"],
@@ -425,7 +605,7 @@ class MCPServer:
                 tags=_tags_to_str(args.get("tags")),
                 extras=args.get("extras"),
                 db_path=db,
-                profile=self._profile,
+                profile=profile,
             )
             return {"id": new_id}
         if name == "log_skill_revision":
@@ -472,9 +652,9 @@ class MCPServer:
         if name == "read_stats":
             return meter.read_stats(meter_path=self._meter_path, **_stats_args(args))
         if name == "node_info":
-            return query.node_info(db_path=db, profile=self._profile)
+            return query.node_info(db_path=db, profile=profile)
         if name == "audit_doctor":
-            return query.audit_doctor(db_path=db, profile=self._profile)
+            return query.audit_doctor(db_path=db, profile=profile)
         if name == "instructions":
             from .instructions import instructions_text
 
@@ -491,7 +671,7 @@ class MCPServer:
                 meter_path=self._meter_path,
             )
         if name == "list_nodes":
-            info = query.node_info(db_path=db, profile=self._profile)
+            info = query.node_info(db_path=db, profile=profile)
             return [
                 {
                     "name": info["name"],

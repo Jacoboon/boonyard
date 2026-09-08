@@ -7,6 +7,46 @@ Versioning follows [ADR-0002 / architecture 04](docs/architecture/04_distributio
 major version is the schema version.** A package on `3.x` reads and writes v3 nodes. A major
 bump means a schema rollover, never a marketing decision.
 
+## [3.4.0] — 2026-09-07
+
+One addition to `MCPServer` and one refactor that had to be made safely (ADR-0014, accepted
+at umbrella #397). The `entry` table is untouched (ADR-0002/0005).
+
+### Added
+- **`MCPServer(nodes={slug: path})` — the account door.** A third construction: several named
+  nodes, writable. A call that names a node is served against that node's file exactly as
+  single-node mode does; a read that names none, or several, is served by an `Aggregator` over
+  the same map. This is what lets one connector reach every node in an account — and equally
+  what lets a self-hoster point one server at three local nodes (ADR-0006: the package is the
+  SaaS, so the hosted layer must not hold an algorithm the package lacks).
+- **`account_tool_defs()`** — `TOOL_DEFS` with `node` **required** on every write tool,
+  *derived* from the module default and from `_WRITE_TOOLS`, never retyped. `tools/list` is
+  answered per connection, so the account door advertises `node` and the per-node door does
+  not (ADR-0014 §3). Requiring it is the structural half of §4's "no default node": a misfile
+  becomes a wrong argument rather than a forgotten one, and append-only means a misfile can
+  only be corrected, never taken back.
+- A write naming an unknown node now gets an error that **names the nodes that exist**, so a
+  model that guessed wrong can fix itself in one turn.
+- Each node's own `boonyard.toml` governs soft validation at the account door, loaded beside
+  its file and cached — the same write behaves the same at either door.
+
+### Changed
+- **`_read_only` is explicit, not derived.** It was `aggregator is not None`, which was the
+  entire protection on the read-only `_aggregate` endpoint. `nodes` mode holds an aggregator
+  *and* permits writes, so that expression would have made `_aggregate` silently writable.
+  The mode is now set once in the constructor and read-only follows from it.
+- A server validates tool names and required parameters against **its own** surface rather
+  than the module-level one.
+- `MCPServer(nodes=…)` refuses to construct without a `meter_path`: with no single home node
+  there is nothing to derive, and an endpoint metered by nothing is worse than a loud error.
+
+### Tests
+- `tests/test_account_door.py` (23 cases). The load-bearing one asserts the two modes differ
+  over the **same node map**: aggregator-mode refuses `log_entry`, nodes-mode accepts it, and
+  the refusal writes nothing. Shown red first by flipping the explicit state — 5 failures
+  across the suite, 3 of them in this file.
+- Package suite 318 (was 295).
+
 ## [Unreleased]
 
 ### Repo, not the package

@@ -6,7 +6,9 @@
 **Date:** 2026-05-20
 **Deciders:** Jacob (Professor), Cowork-Opus
 **Supersedes:** —
-**Superseded by:** —
+**Superseded by:** — (see the 2026-09-07 note below)
+
+> **2026-09-07 — extended, not superseded (ADR-0014, PROPOSED).** This ADR's per-node endpoints and per-node keys stand exactly as written. ADR-0014 adds a third endpoint form `/{user}` and a third key scope `user:{user_id}`, dispatching writes to a single node named in the call and cross-node reads to the aggregator — so the `_aggregate` read-only guarantee below is untouched. The tool-level sentence in this document ("`scope` is interpreted as which node to write to") is what ADR-0014 finally honours at an endpoint.
 
 ## Context
 

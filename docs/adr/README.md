@@ -19,6 +19,7 @@ Each ADR captures one load-bearing decision with its context, the decision itsel
 | [0011](0011-billing-prices-and-founders.md) | Billing, prices, and the founder→paid transition | Accepted (2026-09-07) |
 | [0012](0012-at-rest-encryption-tiers.md) | At-rest encryption: two tiers, what can truthfully be promised | Accepted (2026-09-07) |
 | [0013](0013-derived-views.md) | Derived views: ghosts, arcs, read heat, panel — derived, never declared | Accepted (2026-09-07) |
+| [0014](0014-account-scoped-access.md) | Account-scoped access: one endpoint, every node (extends 0008) | Accepted (2026-09-07) |
 
 ## Writing a new ADR
 
