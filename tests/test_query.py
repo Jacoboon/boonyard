@@ -428,7 +428,7 @@ class UpcomingDatesTests(unittest.TestCase):
             init_db(db, node_name="umbrella")
             log_entry("conductor", "note", "dated", tags="killdate:2026-09-01", db_path=db)
             row = upcoming_dates(45, today=PINNED, db_path=db)["dates"][0]
-            self.assertEqual(row["node"], "umbrella")
+            self.assertEqual(row["source"], "umbrella")
 
     def test_bad_pinned_today_is_a_value_error(self):
         with self.assertRaises(ValueError):

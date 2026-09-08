@@ -7,6 +7,51 @@ Versioning follows [ADR-0002 / architecture 04](docs/architecture/04_distributio
 major version is the schema version.** A package on `3.x` reads and writes v3 nodes. A major
 bump means a schema rollover, never a marketing decision.
 
+## [3.5.0] — 2026-09-07
+
+**Breaking at multi-node doors only. Single-node doors are untouched — no new argument,
+no schema change, nothing to migrate.** ADR-0014 §11, amendment accepted 2026-09-07 and
+reproduced through the live account door before it was written.
+
+### The defect
+An entry id is node-local: alpha's #5 and beta's #5 are different entries. A door that
+unions several nodes was applying that union to arguments that are not spanning
+quantities. Measured, not theorised: `get_thread(1)` returned three rows from two nodes
+containing **two unrelated roots**, which is not a thread by any reading of its contract;
+`by_id(1)` returned whichever node the registry listed first, so the same call answers
+differently after an unrelated node is added. Every row already carried `source`, so the
+datum that would have disambiguated was present and thrown away.
+
+### Changed — `node` is now REQUIRED where the argument is node-local
+- `by_id`, `get_thread`, `latest_skill` (class A) require `node` at every multi-node door.
+- `node_info`, `list_skills`, `audit_doctor`, `ghosts` (class B) require `node` at the
+  account door, and are **no longer advertised** at the aggregate door, which cannot
+  serve them: a door advertises only what it can serve. Its `tools/list` goes 20 → 15.
+  The two write tools stay listed there and keep their read-only refusal, deliberately —
+  that message is ADR-0008's teaching surface.
+- The spanning reads are untouched. "Should every endpoint name a node?" was asked and
+  ruled **no**: the spanning read is the door's whole value.
+- **An unreachable `node` raises** the reachable-slugs error instead of falling through
+  to the union. Requiring the argument does not fix the defect on its own — a typo would
+  still have returned a plausible row from the wrong wall.
+- `upcoming_dates` rows and their warnings carry **`source`**, not `node`, matching every
+  other tool. At a multi-node door the value is the registry slug; at a single-node door
+  it stays the node's own label, because nothing there takes a `node` argument.
+- In `nodes` mode every payload carries the slug it was served from, **write receipts
+  included**: a bare `{"id": 412}` from a door serving six walls cannot be cited.
+- `list_nodes` says which of `name`/`slug` is addressable; the `instructions` readme now
+  teaches the citation form `#412@umbrella`.
+- The `Aggregator`'s "invalid node name" message no longer contradicts its own regex.
+
+### Tests
+`tests/test_node_local_ids.py` (22 cases) with **hyphenated slugs and colliding ids** —
+two nodes each holding #1 and #2, threaded in one only. Shown red first against 3.4.0:
+14 of 22 failed, including the union returning two roots and the typo returning a row
+from a node the caller never named. Anti-drift: `_AGGREGATOR_TOOLS` is proven equal to
+what `_call_aggregator` actually dispatches, driven through the real method. The
+regression fence is a single-node door whose `tools/list` is byte-identical to
+`TOOL_DEFS`. Suite 345 (was 323).
+
 ## [3.4.0] — 2026-09-07
 
 One addition to `MCPServer` and one refactor that had to be made safely (ADR-0014, accepted

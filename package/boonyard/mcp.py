@@ -191,7 +191,14 @@ TOOL_DEFS: list[dict] = [
         },
         [],
     ),
-    _tool("list_nodes", "Configured nodes + metadata.", {}, []),
+    _tool(
+        "list_nodes",
+        "Configured nodes + metadata. Each row carries 'slug' and 'name': the SLUG is "
+        "what you pass back as 'node' or 'scope'; 'name' is the human label and is not "
+        "addressable.",
+        {},
+        [],
+    ),
     _tool("node_info", "Full node metadata.", {"scope": _STR}, []),
     _tool("audit_doctor", "The substrate self-audit.", {"scope": _STR}, []),
     _tool(
@@ -220,38 +227,125 @@ _TOOL_NAMES = {t["name"] for t in TOOL_DEFS}
 _TOOL_REQUIRED = {t["name"]: t["inputSchema"]["required"] for t in TOOL_DEFS}
 _WRITE_TOOLS = {"log_entry", "log_skill_revision"}
 
+# ADR-0014 §11 — name the node wherever the argument is node-local.
+#
+# CLASS A: the argument only means something inside one node, so a union of it is a
+# WRONG answer rather than a slow one. `get_thread(1)` across two walls returned two
+# unrelated roots stapled together; `by_id(1)` returned whichever node the registry
+# happened to list first. `latest_skill` belongs here because ADR-0004 anchors a skill
+# by slug WITHIN a node, so two walls each holding a `readme` is the normal case.
+_NODE_LOCAL_TOOLS = frozenset({"by_id", "get_thread", "latest_skill"})
+
+# CLASS B: a per-node fact with no union implementation at all. Required at the account
+# door; NOT ADVERTISED at the aggregate door, which cannot serve them — a door
+# advertises only what it can serve, rather than listing a tool and then answering it
+# with an error that is true of the wrong thing.
+_PER_NODE_TOOLS = frozenset({"node_info", "list_skills", "audit_doctor", "ghosts"})
+
+# What `_call_aggregator` actually dispatches. Hand-maintained sets rot; the anti-drift
+# test in tests/test_node_local_ids.py drives every tool through the real method and
+# fails if this set and that method ever disagree.
+_AGGREGATOR_TOOLS = frozenset(
+    {
+        "recent",
+        "by_id",
+        "get_thread",
+        "search_by_tag",
+        "search_by_tag_exact",
+        "search_text",
+        "list_tags",
+        "list_agents",
+        "list_entry_types",
+        "upcoming_dates",
+        "read_stats",
+        "list_nodes",
+        "instructions",
+    }
+)
+
 _NODE_ARG = {
     "type": "string",
-    "description": "which node to write to (required at the account door; call "
-    "list_nodes for the slugs)",
+    "description": "which node — required here because this endpoint serves several; "
+    "call list_nodes for the slugs, and note that every row names its node in 'source'",
 }
 
 
-def account_tool_defs(defs: list[dict] | None = None) -> list[dict]:
-    """``TOOL_DEFS`` with ``node`` REQUIRED on every write tool — derived, never retyped.
+def unknown_node_error(named, reachable) -> MCPError:
+    """The one error for a node this endpoint does not reach — reads and writes alike.
 
-    ADR-0014 §3: ``tools/list`` is answered per connection, so a server that reaches
-    several nodes advertises a different schema from one that reaches a single node.
-    Requiring ``node`` on writes is the structural half of §4's "no default node": a
-    misfile becomes a WRONG argument rather than a FORGOTTEN one, and on an
-    append-only store a misfile can only be corrected, never taken back.
+    >>> unknown_node_error("tets-0", {"test-0": "…"}).message
+    "unknown node 'tets-0'; this endpoint reaches: test-0"
+    """
+    reach = ", ".join(sorted(reachable)) if reachable else "(no nodes yet)"
+    return MCPError(
+        "validation",
+        f"unknown node {named!r}; this endpoint reaches: {reach}",
+        hint="call list_nodes for the available nodes",
+    )
 
-    The write set is ``_WRITE_TOOLS``, which is also what the read-only guard and the
-    meter's classification use — one source, so a third write tool added later cannot
-    get its ``node`` requirement in one place and not the others.
 
-    >>> [t["inputSchema"]["required"] for t in account_tool_defs()
-    ...  if t["name"] == "log_entry"]
-    [['agent', 'entry_type', 'content', 'node']]
+def _with_node_required(defs: list[dict], needs_node: frozenset[str]) -> list[dict]:
+    """Copy ``defs``, adding a REQUIRED ``node`` to every tool named in ``needs_node``.
+
+    One expression, derived from the sets above and never retyped, so a tool added to
+    a class later cannot get its requirement in one place and not the others.
     """
     out = []
-    for original in defs if defs is not None else TOOL_DEFS:
+    for original in defs:
         tool = copy.deepcopy(original)
-        if tool["name"] in _WRITE_TOOLS:
+        if tool["name"] in needs_node:
             tool["inputSchema"]["properties"]["node"] = dict(_NODE_ARG)
             tool["inputSchema"]["required"] = [*tool["inputSchema"]["required"], "node"]
         out.append(tool)
     return out
+
+
+def account_tool_defs(defs: list[dict] | None = None) -> list[dict]:
+    """The account door's surface: ``node`` REQUIRED on classes A, B and D.
+
+    ADR-0014 §3: ``tools/list`` is answered per connection, so a door that reaches
+    several nodes advertises a different schema from one that reaches a single node.
+    Requiring ``node`` is the structural half of §4's "no default node" and of §11's
+    node-local rule: a misfile becomes a WRONG argument rather than a FORGOTTEN one,
+    and on an append-only store a misfile can only be corrected, never taken back.
+    The spanning reads (class C) are untouched — that is the door's whole value.
+
+    >>> [t["inputSchema"]["required"] for t in account_tool_defs()
+    ...  if t["name"] == "log_entry"]
+    [['agent', 'entry_type', 'content', 'node']]
+    >>> [t["inputSchema"]["required"] for t in account_tool_defs()
+    ...  if t["name"] == "by_id"]
+    [['entry_id', 'node']]
+    >>> [t["inputSchema"]["required"] for t in account_tool_defs()
+    ...  if t["name"] == "recent"]
+    [[]]
+    """
+    source = defs if defs is not None else TOOL_DEFS
+    return _with_node_required(source, _WRITE_TOOLS | _NODE_LOCAL_TOOLS | _PER_NODE_TOOLS)
+
+
+def aggregator_tool_defs(defs: list[dict] | None = None) -> list[dict]:
+    """The aggregate door's surface: what it can serve, plus the writes it refuses.
+
+    A door advertises only what it can serve (ADR-0014 §11), so the class-B reads and
+    ``latest_skill`` — which ``_call_aggregator`` has no union for — are dropped rather
+    than listed and then answered with "not available on the aggregator endpoint", an
+    error that is true of the wrong thing at the door a new user meets first.
+
+    ⚠ THE TWO WRITES STAY LISTED, DELIBERATELY. Their refusal ("address a specific node
+    to write") is the teaching surface ADR-0008 built, and the ``query_only`` guard
+    behind it is a safety property worth exercising. The asymmetry is on purpose; do
+    not tidy it away.
+
+    >>> len(aggregator_tool_defs())
+    15
+    >>> [t["inputSchema"]["required"] for t in aggregator_tool_defs()
+    ...  if t["name"] == "get_thread"]
+    [['root_id', 'node']]
+    """
+    source = defs if defs is not None else TOOL_DEFS
+    served = [t for t in source if t["name"] in _AGGREGATOR_TOOLS | _WRITE_TOOLS]
+    return _with_node_required(served, _NODE_LOCAL_TOOLS)
 
 
 def _dates_args(args: dict) -> dict:
@@ -271,6 +365,37 @@ def _stats_args(args: dict) -> dict:
         "within_days": 7 if within is None else int(within),
         "today": args.get("today"),
     }
+
+
+def _stamp_source(payload, slug: str):
+    """Stamp ``source = slug`` through a payload served from ONE node (ADR-0014 §11).
+
+    Only ``nodes`` mode calls this. ``_call_single`` stamps nothing — it was written
+    for a door where the node is the connector — so without this the account door
+    answers a SPANNING read with provenance and a NODE-NAMED read without it, which is
+    exactly backwards for a citation convention. Write receipts are included: a bare
+    ``{"id": 412}`` from a door serving six walls is a number nobody can cite.
+
+    It also overwrites ``source`` on dated rows, because a single-node
+    ``upcoming_dates`` fills that key with the node's human LABEL while at a
+    multi-node door the addressable value is the registry SLUG (§11, one namespace).
+
+    >>> _stamp_source({"id": 412}, "umbrella")
+    {'id': 412, 'source': 'umbrella'}
+    """
+    if isinstance(payload, list):
+        for item in payload:
+            _stamp_source(item, slug)
+    elif isinstance(payload, dict):
+        payload["source"] = slug
+        for key in ("latest", "readme"):  # list_skills rows, instructions.readme
+            if isinstance(payload.get(key), dict):
+                payload[key]["source"] = slug
+        for key in ("dates", "warnings"):  # the upcoming_dates envelope
+            for row in payload.get(key) or []:
+                if isinstance(row, dict):
+                    row["source"] = slug
+    return payload
 
 
 def _tags_to_str(tags) -> str | None:
@@ -351,7 +476,11 @@ class MCPServer:
         self._tool_defs = (
             tool_defs
             if tool_defs is not None
-            else (account_tool_defs() if self._mode == "nodes" else TOOL_DEFS)
+            else {
+                "nodes": account_tool_defs,
+                "aggregator": aggregator_tool_defs,
+                "single": lambda: TOOL_DEFS,
+            }[self._mode]()
         )
         self._tool_names = {t["name"] for t in self._tool_defs}
         self._tool_required = {t["name"]: t["inputSchema"]["required"] for t in self._tool_defs}
@@ -408,39 +537,45 @@ class MCPServer:
 
     # -- which node is this call about? ------------------------------------
     def _target_node(self, args: dict) -> str | None:
-        """The single node a call names, or None when it spans (ADR-0014 §1).
+        """The single node a call names, or None when it spans (ADR-0014 §1, §11).
 
-        A call names a node with ``node`` (writes) or a ``scope`` that is one string
+        A call names a node with ``node``, or with a ``scope`` that is one string
         naming a node in this server's map (ADR-0008's meaning of scope, unchanged).
-        Anything else — no scope, ``'all'``, a list — spans, and spanning is the
+        Anything else — no argument, ``'all'``, a list — spans, and spanning is the
         aggregator's job. Returns None in every mode but ``nodes``.
+
+        ⚠ AN UNREACHABLE ``node`` RAISES; IT NEVER FALLS THROUGH TO THE UNION
+        (ADR-0014 §11). Returning None for a name we do not recognise would mean a
+        typo — ``node="tets-0"`` — silently spans and hands back a plausible row from
+        the wrong wall: the same wrong answer this amendment exists to kill, wearing a
+        different hat. Requiring the argument does not fix that on its own; refusing
+        an unknown value does.
         """
         if self._mode != "nodes":
             return None
         named = args.get("node")
-        if isinstance(named, str) and named in self._nodes:
-            return named
+        if named is not None:
+            return self._require_node(named)
         scope = args.get("scope")
         if isinstance(scope, str) and scope in self._nodes:
             return scope
         return None
 
-    def _resolve_write_node(self, args: dict) -> str:
-        """The node a write names, or a validation error that says what IS available.
+    def _require_node(self, named) -> str:
+        """``named`` if this server reaches it, else the error that says what it does.
 
-        The required-parameter check already produced the missing case; this is the
-        WRONG case, and it names the slugs so a model that guessed can fix itself in
-        one turn instead of guessing again.
+        The required-parameter check produces the MISSING case; this is the WRONG one,
+        and it names the reachable slugs so a model that guessed can fix itself in one
+        turn instead of guessing again. Reads and writes share it, so they cannot
+        diverge (ADR-0014 §11).
         """
-        named = args.get("node")
         if isinstance(named, str) and named in self._nodes:
             return named
-        reach = ", ".join(sorted(self._nodes)) if self._nodes else "(no nodes yet)"
-        raise MCPError(
-            "validation",
-            f"unknown node {named!r}; this key reaches: {reach}",
-            hint="call list_nodes for the available nodes",
-        )
+        raise unknown_node_error(named, self._nodes)
+
+    def _resolve_write_node(self, args: dict) -> str:
+        """The node a write names. Same rule, same error, as every other caller."""
+        return self._require_node(args.get("node"))
 
     # -- the meter ---------------------------------------------------------
     def _meter_node(self, args: dict) -> str | None:
@@ -498,23 +633,29 @@ class MCPServer:
                 "read_only",
                 "aggregator endpoint is read-only; address a specific node to write",
             )
+        # Resolved BEFORE the meter, because an unreachable node is a refused call and a
+        # refused call should not be counted as an attempt against a node that does not
+        # exist. Raises the reachable-slugs error (ADR-0014 §11).
+        target = self._target_node(args) if self._mode == "nodes" else None
         # Counted before dispatch: an attempt that then errors is still an attempt,
         # and record() cannot raise, so this can never break the call below.
         self._meter(name, args)
         if self._mode == "nodes":
             # ADR-0014 §1: a call that names a node is served against that node's file,
             # exactly as single-node mode does; a read that names none, or several, is
-            # served by the aggregator. A write ALWAYS names one.
+            # served by the aggregator. A write ALWAYS names one, and every class-A and
+            # class-B tool is advertised as requiring one (§11).
             if name in _WRITE_TOOLS:
-                named = self._resolve_write_node(args)
-                payload = self._call_single(name, args, db=self._nodes[named])
+                target = self._resolve_write_node(args)
+            if target is not None:
+                payload = self._call_single(name, args, db=self._nodes[target])
+                # §11 provenance: at a door serving several walls, a payload that does
+                # not name its node is a citation nobody can follow — write receipts
+                # included. Stamped BEFORE the read-heat hook: it improves attribution
+                # and must not change it.
+                _stamp_source(payload, target)
             else:
-                target = self._target_node(args)
-                payload = (
-                    self._call_single(name, args, db=self._nodes[target])
-                    if target is not None
-                    else self._call_aggregator(name, args)
-                )
+                payload = self._call_aggregator(name, args)
         elif self._agg is not None:
             payload = self._call_aggregator(name, args)
         else:
@@ -548,7 +689,7 @@ class MCPServer:
             return [(payload.get("source"), payload["id"])] if isinstance(payload, dict) else []
         if name == "upcoming_dates":
             return [
-                (d.get("node"), d["entry_id"])
+                (d.get("source"), d["entry_id"])
                 for d in payload.get("dates", [])
                 if isinstance(d, dict) and d.get("entry_id") is not None
             ]
@@ -713,6 +854,14 @@ class MCPServer:
     def _call_aggregator(self, name, args: dict):
         agg = self._agg
         scope = args.get("scope")
+        if name in _NODE_LOCAL_TOOLS:
+            # ADR-0014 §11: a node-local argument is read against exactly ONE node, so
+            # the union is unreachable rather than merely discouraged. `get_thread(1)`
+            # unioned here once and returned two unrelated roots as one thread.
+            named = args.get("node")
+            if not isinstance(named, str) or named not in agg.nodes():
+                raise unknown_node_error(named, agg.nodes())
+            scope = named
         if name == "recent":
             return agg.recent(
                 args.get("limit", 20), args.get("agent"), args.get("entry_type"), scope=scope

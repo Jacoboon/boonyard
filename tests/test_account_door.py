@@ -220,9 +220,9 @@ class WriteRoutingTests(NodeMapCase):
             node="beta-two",
         )
         self.assertIsInstance(payload["id"], int)
-        latest = _call(self.account(), "latest_skill", slug="readme", scope="beta-two")
+        latest = _call(self.account(), "latest_skill", slug="readme", node="beta-two")
         self.assertEqual(latest["content"], "beta's readme")
-        self.assertIsNone(_call(self.account(), "latest_skill", slug="readme", scope="alpha-one"))
+        self.assertIsNone(_call(self.account(), "latest_skill", slug="readme", node="alpha-one"))
 
 
 # ---------------------------------------------------------------------------
@@ -245,17 +245,30 @@ class ToolSurfaceTests(NodeMapCase):
             self.assertNotIn("node", schemas[tool]["required"], tool)
             self.assertNotIn("node", schemas[tool]["properties"], tool)
 
-    def test_both_doors_carry_the_same_twenty_tools(self):
-        self.assertEqual(set(self._defs(self.account())), set(self._defs(self.aggregate())))
-        self.assertEqual(len(self._defs(self.account())), len(TOOL_DEFS))
+    def test_the_account_door_carries_all_twenty_and_the_aggregate_door_fifteen(self):
+        """§11: a door advertises only what it can serve. The aggregate one cannot
+        serve the four class-B reads or latest_skill, so it stops listing them."""
+        from boonyard.mcp import _PER_NODE_TOOLS
+
+        account = self._defs(self.account())
+        aggregate = self._defs(self.aggregate())
+        self.assertEqual(len(account), len(TOOL_DEFS))
+        self.assertEqual(len(aggregate), 15)
+        self.assertEqual(set(account) - set(aggregate), _PER_NODE_TOOLS | {"latest_skill"})
 
     def test_account_tool_defs_are_derived_not_retyped(self):
+        """Only the classes that need a node differ; everything else is untouched."""
+        from boonyard.mcp import _NODE_LOCAL_TOOLS, _PER_NODE_TOOLS, _WRITE_TOOLS
+
+        needs_node = _WRITE_TOOLS | _NODE_LOCAL_TOOLS | _PER_NODE_TOOLS
         derived = {t["name"]: t for t in account_tool_defs()}
         for original in TOOL_DEFS:
             got = derived[original["name"]]
             self.assertEqual(got["description"], original["description"])
-            if original["name"] not in ("log_entry", "log_skill_revision"):
+            if original["name"] not in needs_node:
                 self.assertEqual(got, original)
+            else:
+                self.assertEqual(got["inputSchema"]["required"][-1], "node")
 
     def test_deriving_does_not_mutate_the_module_default(self):
         account_tool_defs()
@@ -282,16 +295,18 @@ class ReadTests(NodeMapCase):
         self.assertEqual({r["name"] for r in rows}, {"alpha-one", "beta-two"})
 
     def test_node_info_serves_the_named_node_and_its_own_profile(self):
-        info = _call(self.account(), "node_info", scope="alpha-one")
+        info = _call(self.account(), "node_info", node="alpha-one")
         self.assertEqual(info["name"], "alpha-one")
         self.assertIn("lane", info["profile"]["namespaces"])
-        beta = _call(self.account(), "node_info", scope="beta-two")
+        beta = _call(self.account(), "node_info", node="beta-two")
         self.assertEqual(beta["name"], "beta-two")
         self.assertNotIn("lane", beta["profile"]["namespaces"])
 
-    def test_node_info_unnamed_keeps_the_aggregator_answer(self):
+    def test_node_info_unnamed_is_now_a_missing_parameter(self):
+        """§11 class B: required at the account door, so the error names the ARGUMENT
+        rather than telling the caller about an aggregator they did not address."""
         error = _error(self.account(), "node_info")
-        self.assertIn("aggregator endpoint", error["message"])
+        self.assertIn("missing required parameter 'node'", error["message"])
 
     def test_instructions_named_carries_that_node_readme(self):
         _call(
@@ -365,7 +380,7 @@ class MeterTests(NodeMapCase):
 
     def test_one_nodes_reads_never_heat_another_nodes_entries(self):
         """The collision this rule exists for: both nodes have an entry #1."""
-        _call(self.account(), "by_id", entry_id=1, scope="beta-two")
+        _call(self.account(), "by_id", entry_id=1, node="beta-two")
         beta_heat = self._rows(self._node_meter("beta-two"), "read_hit")
         self.assertEqual([(r[1], r[2]) for r in beta_heat], [("beta-two", 1)])
         self.assertEqual(self._rows(self._node_meter("alpha-one"), "read_hit"), [])

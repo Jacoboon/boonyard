@@ -248,9 +248,11 @@ class AggregatorModeTests(unittest.TestCase):
         self.assertEqual(rows[0]["source"], "a")
 
     def test_all_aggregator_readers_dispatch(self):
+        # ADR-0014 §11: the two node-local readers now name their node; an entry id
+        # means nothing across a union, so the aggregate door refuses to guess.
         for name, args in [
-            ("by_id", {"entry_id": 1}),
-            ("get_thread", {"root_id": 1}),
+            ("by_id", {"entry_id": 1, "node": "a"}),
+            ("get_thread", {"root_id": 1, "node": "a"}),
             ("search_by_tag", {"tag": "shared"}),
             ("search_by_tag_exact", {"tag": "shared"}),
             ("search_text", {"query": "from"}),
@@ -265,8 +267,11 @@ class AggregatorModeTests(unittest.TestCase):
             self.assertIsNone(err, f"{name} errored: {err}")
 
     def test_node_info_not_available_on_aggregator(self):
+        """It is not advertised either (§11: a door lists only what it can serve)."""
         _, err = _call(self.server, "node_info", {})
         self.assertEqual(err["data"]["error"], "validation")
+        advertised = {t["name"] for t in self.server._tool_defs}
+        self.assertNotIn("node_info", advertised)
 
     def test_requires_db_or_aggregator(self):
         with self.assertRaises(ValueError):
@@ -542,7 +547,7 @@ class UpcomingDatesToolTests(unittest.TestCase):
         payload, err = _call(self.agg_server, "upcoming_dates", {"scope": "all", "today": PINNED})
         self.assertIsNone(err)
         self.assertEqual(
-            [(r["date"], r["node"]) for r in payload["dates"]],
+            [(r["date"], r["source"]) for r in payload["dates"]],
             [
                 ("2026-08-20", "umbrella"),
                 ("2026-09-11", "jrhood"),
@@ -556,7 +561,7 @@ class UpcomingDatesToolTests(unittest.TestCase):
         payload, _ = _call(
             self.agg_server, "upcoming_dates", {"scope": ["jrhood"], "today": PINNED}
         )
-        self.assertEqual([r["node"] for r in payload["dates"]], ["jrhood"])
+        self.assertEqual([r["source"] for r in payload["dates"]], ["jrhood"])
 
     def test_register_is_readable_over_real_http(self):
         """The connector shape end to end: JSON-RPC over a socket, no filesystem."""

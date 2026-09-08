@@ -313,7 +313,7 @@ class UpcomingDatesAcrossNodesTests(unittest.TestCase):
     def test_scope_all_merges_and_sorts_across_three_nodes(self):
         result = self.agg.upcoming_dates(45, today=PINNED, scope="all")
         self.assertEqual(
-            [(r["date"], r["node"]) for r in result["dates"]],
+            [(r["date"], r["source"]) for r in result["dates"]],
             [
                 ("2026-08-20", "jrhood"),
                 ("2026-09-01", "umbrella"),
@@ -327,12 +327,12 @@ class UpcomingDatesAcrossNodesTests(unittest.TestCase):
     def test_malformed_tag_on_one_node_warns_with_that_node_named(self):
         result = self.agg.upcoming_dates(45, today=PINNED, scope="all")
         warning = next(w for w in result["warnings"] if w["kind"] == "malformed_date_tag")
-        self.assertEqual(warning["node"], "mindstorm")
+        self.assertEqual(warning["source"], "mindstorm")
         self.assertEqual(warning["tag"], "killdate:whenever")
 
     def test_scope_narrowing(self):
         result = self.agg.upcoming_dates(45, today=PINNED, scope=["jrhood"])
-        self.assertEqual([r["node"] for r in result["dates"]], ["jrhood"])
+        self.assertEqual([r["source"] for r in result["dates"]], ["jrhood"])
 
     def test_broken_node_yields_healthy_results_plus_a_named_warning(self):
         """THE #76 FINDING-2 REGRESSION TEST.

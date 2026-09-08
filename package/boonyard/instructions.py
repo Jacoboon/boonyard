@@ -52,6 +52,11 @@ skill; latest_skill(slug) returns the newest; list_skills is the catalog. The sl
 READ HEAT — every read records the ids it returned (never the query); ghosts lists \
 root entries nobody threaded to or read; read_stats is the read/write meter.
 
+IDS ARE NODE-LOCAL — #412 means nothing without its node: another node has its own \
+#412. If this endpoint serves several nodes, every row names its node in "source" and \
+by_id, get_thread, latest_skill and the writes require node=<slug> (list_nodes gives \
+the slugs). Cite an entry as #412@umbrella, and pass that slug back as node.
+
 TOOLS (name — purpose):
 {tools}
 

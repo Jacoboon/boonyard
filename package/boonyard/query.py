@@ -371,7 +371,7 @@ def _dated_entry_rows(
         warnings.append(
             {
                 "kind": "malformed_date_tag",
-                "node": node,
+                "source": node,
                 "entry_id": entry["id"],
                 "tag": tag,
                 "detail": f"{tag!r} is not {prefix}:YYYY-MM-DD — skipped, not raised",
@@ -387,7 +387,7 @@ def _dated_entry_rows(
                 "days_out": days_out,
                 "overdue": days_out < 0,
                 "entry_id": entry["id"],
-                "node": node,
+                "source": node,
                 "agent": entry["agent"],
                 "prefix": prefix,
                 "headline": " ".join(entry["content"].split())[:120],
@@ -401,7 +401,8 @@ def _dates_envelope(
     day: date, within_days: int, prefix: str, rows: list[dict], warnings: list[dict]
 ) -> dict:
     """Sort soonest-first (overdue at the top) and wrap in the result envelope."""
-    rows.sort(key=lambda r: (r["date"], r["node"] or "", r["entry_id"]))
+    # ADR-0014 §11: one key for "which node did this come from", everywhere: `source`.
+    rows.sort(key=lambda r: (r["date"], r["source"] or "", r["entry_id"]))
     return {
         "today": day.isoformat(),
         "within_days": within_days,

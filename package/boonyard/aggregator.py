@@ -79,7 +79,7 @@ class Aggregator:
     def __init__(self, nodes: dict[str, str]):
         for name in nodes:
             if not _IDENT.match(name):
-                raise ValueError(f"invalid node name {name!r}: use [A-Za-z0-9_] only")
+                raise ValueError(f"invalid node name {name!r}: use [A-Za-z0-9_-] only")
         self._nodes = dict(nodes)
 
     # -- scope + connection plumbing ---------------------------------------

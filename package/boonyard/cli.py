@@ -71,7 +71,7 @@ def _fmt_date_row(row: dict) -> str:
     """One line of the kill-date table. Overdue rows carry a leading ``!``."""
     flag = "!" if row["overdue"] else " "
     days = f"{row['days_out']:+d}d"
-    node = row["node"] or "-"
+    node = row["source"] or "-"
     entry = f"#{row['entry_id']}"
     return f"{flag} {row['date']}  {days:>6}  {node:<12} {entry:<7} {row['headline'][:72]}"
 
