@@ -339,3 +339,86 @@ class PureAppTests(unittest.TestCase):
             self.assertIn(("Allow", "GET"), headers)
             status, headers, _b = app.handle(Request("GET", "/logout", {}, {}, b"", "127.0.0.1"))
             self.assertEqual(status, 405)
+
+
+class AccountDoorInTheDashboardTests(WebTestCase):
+    """The landing page's headline promise, reachable from the product (ADR-0014).
+
+    Until 2026-09-08 it was not. `provisioner.add_account_key` had exactly one caller —
+    the operator CLI — so the dashboard could only ever show a per-node URL and mint a
+    per-node key, while boonyard.com sold "one MCP URL and one key for the whole
+    account". A user who improvised and presented a node key at the account door was
+    told by the router to "mint an account key", a button that existed nowhere.
+    """
+
+    def test_the_dashboard_offers_the_account_door_and_it_actually_works(self):
+        self.signed_in_user()
+        csrf = self.web.csrf()
+        self.web.post("/nodes", {"csrf": csrf, "slug": "n1"})
+        self.web.post("/nodes", {"csrf": csrf, "slug": "n2"})
+
+        status, _h, body = self.web.get("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"http://mcp.test/alice", body)  # the ACCOUNT door, not a node door
+        self.assertIn(b"connector", body)
+        self.assertIn(b"Streamable HTTP", body)
+
+        status, headers, body = self.web.post("/keys/account", {"csrf": csrf, "label": "laptop"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        raw = _KEY_RE.search(body).group(0).decode()
+        # the recipe carries the REAL key, so nothing has to be assembled by hand
+        self.assertIn(f"Authorization: Bearer {raw}".encode(), body)
+
+        # ...and it opens EVERY node, which is the whole point
+        with ServedRouter(self.reg) as router:
+            for node in ("n1", "n2"):
+                status, resp, _h = router.post(
+                    "/alice",
+                    tool_call(
+                        "log_entry",
+                        {"agent": "code", "entry_type": "note", "content": "hi", "node": node},
+                    ),
+                    {"Authorization": f"Bearer {raw}"},
+                )
+                self.assertEqual(status, 200, resp)
+                self.assertEqual(payload_of(resp)["source"], node)
+
+    def test_an_account_key_can_be_revoked_from_the_dashboard(self):
+        """_owns_key scanned node-scoped keys only, so the most powerful credential the
+        product issues had no revoke path at all."""
+        self.signed_in_user()
+        csrf = self.web.csrf()
+        self.web.post("/nodes", {"csrf": csrf, "slug": "n1"})
+        _s, _h, body = self.web.post("/keys/account", {"csrf": csrf, "label": "laptop"})
+        raw = _KEY_RE.search(body).group(0).decode()
+
+        _s, _h, body = self.web.get("/")
+        key_id = re.search(rb"/keys/([0-9a-f-]{36})/revoke", body).group(1).decode()
+        status, _h, _b = self.web.post(f"/keys/{key_id}/revoke", {"csrf": csrf})
+        self.assertEqual(status, 303)
+
+        with ServedRouter(self.reg) as router:
+            status, _r, _h = router.post(
+                "/alice", rpc("tools/list"), {"Authorization": f"Bearer {raw}"}
+            )
+            self.assertEqual(status, 401, "a revoked account key must be refused")
+
+    def test_the_per_node_door_survives_as_the_narrow_tool(self):
+        """Demoted behind a disclosure, never deleted: sharing one project is real."""
+        self.signed_in_user()
+        csrf = self.web.csrf()
+        self.web.post("/nodes", {"csrf": csrf, "slug": "n1"})
+        _s, _h, body = self.web.get("/")
+        self.assertIn(b"<details>", body)
+        self.assertIn(b"http://mcp.test/alice/n1", body)
+        status, _h, body = self.web.post("/nodes/n1/keys", {"csrf": csrf, "label": "one-project"})
+        self.assertEqual(status, 200)
+        self.assertIsNotNone(_KEY_RE.search(body))
+
+    def test_a_brand_new_account_is_told_what_to_do(self):
+        """The empty state: no nodes, no keys, and the panel still explains itself."""
+        self.signed_in_user()
+        _s, _h, body = self.web.get("/")
+        self.assertIn(b"Nothing is connected yet", body)
+        self.assertIn(b"http://mcp.test/alice", body)
