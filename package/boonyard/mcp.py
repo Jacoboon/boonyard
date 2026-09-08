@@ -470,10 +470,11 @@ class MCPServer:
         Classification reuses ``_WRITE_TOOLS`` so it cannot drift from the
         read-only enforcement above.
         """
+        node = self._meter_node(args)
         meter.record(
-            self._meter_path,
+            self._meter_for(node),
             name,
-            node=self._meter_node(args),
+            node=node,
             kind="write" if name in _WRITE_TOOLS else "read",
         )
 
@@ -550,6 +551,23 @@ class MCPServer:
             return [(readme.get("source"), readme["id"])] if isinstance(readme, dict) else []
         return []
 
+    def _meter_for(self, node: str | None):
+        """Which meter file a fact about ``node`` belongs in.
+
+        ⚠ IN ``nodes`` MODE, EVERY PER-NODE FACT GOES IN THAT NODE'S OWN ``meter.db``,
+        not the account's. Entry ids are per node — alpha's #5 and beta's #5 are
+        different entries — and ``views.ghosts`` looks read-heat up by entry id without
+        a node filter. Pooling several nodes' heat in one file would therefore let one
+        node's reads mark another node's entries as read, and `ghosts` would quietly
+        stop finding real orphans. Keeping heat where the node lives also means the
+        account door and that node's own door agree about it, which is ADR-0006's
+        promise. The account's own ``meter_path`` then holds exactly what has no single
+        node: the spanning calls.
+        """
+        if self._mode == "nodes" and node is not None and node in self._nodes:
+            return meter.default_meter_path(self._nodes[node])
+        return self._meter_path
+
     def _hits(self, name: str, args: dict, payload) -> None:
         """Record the ids a read returned.
 
@@ -564,7 +582,7 @@ class MCPServer:
         for source, eid in pairs:
             by_node.setdefault(source if source is not None else default_node, []).append(eid)
         for node, ids in by_node.items():
-            meter.record_hits(self._meter_path, name, node=node, entry_ids=ids)
+            meter.record_hits(self._meter_for(node), name, node=node, entry_ids=ids)
 
     def _profile_for(self, db):
         """The profile that governs soft validation for the node being served.
@@ -596,6 +614,9 @@ class MCPServer:
         """
         db = db if db is not None else self._db
         profile = self._profile_for(db)
+        # read_stats and ghosts read the meter; in nodes mode that is the NODE's meter,
+        # so both doors answer the same question the same way (see _meter_for).
+        meter_path = meter.default_meter_path(db) if self._mode == "nodes" else self._meter_path
         if name == "log_entry":
             new_id = log_entry(
                 args["agent"],
@@ -650,7 +671,7 @@ class MCPServer:
         if name == "upcoming_dates":
             return query.upcoming_dates(db_path=db, **_dates_args(args))
         if name == "read_stats":
-            return meter.read_stats(meter_path=self._meter_path, **_stats_args(args))
+            return meter.read_stats(meter_path=meter_path, **_stats_args(args))
         if name == "node_info":
             return query.node_info(db_path=db, profile=profile)
         if name == "audit_doctor":
@@ -668,7 +689,7 @@ class MCPServer:
                 int(args.get("limit") or 20),
                 int(args.get("older_than_days") or 30),
                 db_path=db,
-                meter_path=self._meter_path,
+                meter_path=meter_path,
             )
         if name == "list_nodes":
             info = query.node_info(db_path=db, profile=profile)

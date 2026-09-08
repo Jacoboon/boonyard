@@ -299,29 +299,65 @@ class ReadTests(NodeMapCase):
 # the meter
 # ---------------------------------------------------------------------------
 class MeterTests(NodeMapCase):
-    def _meter_rows(self, table="meter"):
-        conn = sqlite3.connect(f"file:{self.meter}?mode=ro", uri=True)
+    """Where a fact is recorded matters as much as whether it is.
+
+    Per-node facts belong in that node's own ``meter.db``. Entry ids are per node —
+    alpha's #5 and beta's #5 are different entries — and ``views.ghosts`` looks read
+    heat up by entry id with no node filter, so pooling several nodes' heat in one
+    file would let one node's reads mark another node's entries as read.
+    """
+
+    def _rows(self, meter_path, table="meter"):
+        if not Path(meter_path).exists():
+            return []
+        conn = sqlite3.connect(f"file:{meter_path}?mode=ro", uri=True)
         try:
-            return (
-                conn.execute(f"SELECT tool, node, kind FROM {table}").fetchall()
+            sql = (
+                "SELECT tool, node, kind FROM meter"
                 if table == "meter"
-                else conn.execute("SELECT tool, node, entry_id FROM read_hit").fetchall()
+                else "SELECT tool, node, entry_id FROM read_hit"
             )
+            return conn.execute(sql).fetchall()
         finally:
             conn.close()
 
-    def test_a_write_is_metered_against_the_node_it_addressed(self):
+    def _node_meter(self, slug):
+        return Path(self.nodes[slug]).parent / "meter.db"
+
+    def test_a_write_is_metered_in_the_node_it_addressed(self):
         _call(
             self.account(), "log_entry", agent="code", entry_type="note", content="x", node="beta"
         )
-        rows = [r for r in self._meter_rows() if r[0] == "log_entry"]
-        self.assertEqual(rows, [("log_entry", "beta", "write")])
+        self.assertEqual(
+            [r for r in self._rows(self._node_meter("beta")) if r[0] == "log_entry"],
+            [("log_entry", "beta", "write")],
+        )
+        self.assertEqual([r for r in self._rows(self.meter) if r[0] == "log_entry"], [])
+        self.assertEqual(self._rows(self._node_meter("alpha")), [])
 
-    def test_a_spanning_read_meters_as_all_and_attributes_heat_per_source(self):
+    def test_a_spanning_read_meters_on_the_account_and_heats_each_node(self):
         _call(self.account(), "recent", limit=20)
-        self.assertIn(("recent", "all", "read"), self._meter_rows())
-        heat_nodes = {r[1] for r in self._meter_rows("read_hit")}
-        self.assertEqual(heat_nodes, {"alpha", "beta"})
+        self.assertIn(("recent", "all", "read"), self._rows(self.meter))
+        for slug in ("alpha", "beta"):
+            heat = self._rows(self._node_meter(slug), "read_hit")
+            self.assertTrue(heat, f"{slug} recorded no read heat")
+            self.assertEqual({r[1] for r in heat}, {slug})
+        self.assertEqual(self._rows(self.meter, "read_hit"), [], "heat pooled on the account")
+
+    def test_one_nodes_reads_never_heat_another_nodes_entries(self):
+        """The collision this rule exists for: both nodes have an entry #1."""
+        _call(self.account(), "by_id", entry_id=1, scope="beta")
+        beta_heat = self._rows(self._node_meter("beta"), "read_hit")
+        self.assertEqual([(r[1], r[2]) for r in beta_heat], [("beta", 1)])
+        self.assertEqual(self._rows(self._node_meter("alpha"), "read_hit"), [])
+
+    def test_read_stats_at_the_account_door_reads_that_nodes_meter(self):
+        _call(
+            self.account(), "log_entry", agent="code", entry_type="note", content="x", node="beta"
+        )
+        stats = _call(self.account(), "read_stats", scope="beta")
+        self.assertEqual(stats["totals"]["writes"], 1)
+        self.assertEqual(_call(self.account(), "read_stats", scope="alpha")["totals"]["writes"], 0)
 
 
 if __name__ == "__main__":
