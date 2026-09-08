@@ -238,7 +238,17 @@ class WebApp:
             return self.terms()
         if head == "health" and len(parts) == 1 and get:
             return self.health()
-        return self._page("Not found", "<p>Nothing here.</p>", status=404)
+        # The app's own catch-all. The site's nginx 404 covers everything OUTSIDE /app;
+        # this one covers everything inside it, and should read the same way — say what
+        # happened, then offer somewhere to go.
+        return self._page(
+            "Not found",
+            "<p>That page isn't here. Nothing is lost — this is a routing miss.</p>"
+            f'<p><a href="{PREFIX}/">Your dashboard</a> · '
+            f'<a href="{PREFIX}/login">sign in</a> · '
+            '<a href="https://boonyard.com/">the front page</a></p>',
+            status=404,
+        )
 
     # -- response helpers -----------------------------------------------------
     @staticmethod
