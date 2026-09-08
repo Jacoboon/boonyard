@@ -505,8 +505,10 @@ class MCPServer:
                         "name": "boonyard",
                         "version": __import__("boonyard").__version__,
                     },
-                    # The package readme, handed to the model on every connect (boonyard #125).
-                    "instructions": instructions_text(),
+                    # The package readme, handed to the model on every connect
+                    # (boonyard #125) — built from THIS door's tool surface, so it
+                    # never teaches a tool this door would refuse (ADR-0014 §11).
+                    "instructions": instructions_text(self._tool_defs),
                 }
             elif method == "tools/list":
                 result = {"tools": self._tool_defs}
@@ -827,7 +829,7 @@ class MCPServer:
             from .instructions import instructions_text
 
             return {
-                "package": instructions_text(),
+                "package": instructions_text(self._tool_defs),
                 "version": __import__("boonyard").__version__,
                 "readme": query.latest_skill("readme", db_path=db),
             }
@@ -896,7 +898,7 @@ class MCPServer:
             from .instructions import instructions_text
 
             return {
-                "package": instructions_text(),
+                "package": instructions_text(self._tool_defs),
                 "version": __import__("boonyard").__version__,
                 "readme": None,
                 "note": "aggregator endpoint: a node's readme is served by that node's endpoint",

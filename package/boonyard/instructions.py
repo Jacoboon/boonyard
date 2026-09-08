@@ -80,11 +80,25 @@ def build(tool_defs: list[dict], version: str) -> str:
     return _BODY.format(version=version, tools="\n".join(lines))
 
 
-def instructions_text() -> str:
-    """The current package readme (assembled once, cached)."""
+def instructions_text(tool_defs: list[dict] | None = None) -> str:
+    """The package readme for ONE door — the module default when none is given.
+
+    ⚠ THE README IS PER DOOR, for the same reason ``tools/list`` is (ADR-0014 §11: a
+    door advertises only what it can serve). The aggregate door serves 15 of the 20
+    tools; a readme built from the module default would have taught a model about
+    ``ghosts`` and ``node_info`` at a door that refuses them — a listing that sends the
+    model to an error, which is the thing §11 removed from ``tools/list`` and would
+    have left standing in the text the model actually reads.
+
+    The default is assembled once and cached, because it is the common case and it is
+    injected on every connect.
+    """
+    from . import __version__
+
+    if tool_defs is not None:
+        return build(tool_defs, __version__)
     global _CACHED
     if _CACHED is None:
-        from . import __version__
         from .mcp import TOOL_DEFS
 
         _CACHED = build(TOOL_DEFS, __version__)

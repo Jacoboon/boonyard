@@ -328,6 +328,34 @@ class DoorSurfaceTests(CollidingIdsCase):
         _node_local, _per_node, aggregator_tools = _sets()
         self.assertEqual(served, set(aggregator_tools))
 
+    def test_the_readme_lists_exactly_what_the_door_serves(self):
+        """§11 applies to the text a model reads, not only to tools/list.
+
+        A readme built from the module default would teach `ghosts` and `node_info` at
+        a door that refuses them — a listing that sends the model straight to an error.
+        """
+        import re
+
+        for server in (self.account(), self.aggregate(), self.single()):
+            served = {
+                t["name"]
+                for t in server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})[
+                    "result"
+                ]["tools"]
+            }
+            readme = server.handle(
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+            )["result"]["instructions"]
+            listed = set(re.findall(r"^  ([a-z_]+) — ", readme, re.M))
+            self.assertEqual(listed, served, f"{server._mode} door")
+
+    def test_the_instructions_tool_returns_the_same_per_door_text(self):
+        aggregate = self.aggregate()
+        payload = _call(aggregate, "instructions")
+        self.assertNotIn("  ghosts — ", payload["package"])
+        self.assertIn("  recent — ", payload["package"])
+        self.assertIsNone(payload["readme"])
+
     def test_every_node_local_tool_is_advertised_as_requiring_node(self):
         for server in (self.account(), self.aggregate()):
             advertised = {
