@@ -89,6 +89,21 @@ class RegistryTests(unittest.TestCase):
             ["alice__n1", "bob__wall-2"],
         )
 
+    def test_a_base_that_contributes_nothing_is_a_fault_not_a_choice(self):
+        """§1.5a. ``base.get("nodes", {})`` collapsed "hosted-only, deliberately" and
+        "you handed me a base and it gave me no walls" into one silent outcome — and
+        the consumer's FATAL guard only fires on a *fully* empty table, which the
+        hosted rows prevent. An emptied base produced a wall-less backup registry that
+        looked exactly like a deliberate one."""
+        self._root.provision("alice", "n1")
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "umbrella.toml"
+            for body in ("", "[nodes]\n", "[other]\nx = 1\n"):
+                base.write_text(body, encoding="utf-8")
+                with self.subTest(base=body), self.assertRaises(ValueError) as caught:
+                    provisioner.backup_config(self.reg, base)
+                self.assertIn("omit --base", str(caught.exception))
+
 
 # --------------------------------------------------------------------------
 # router: rate limits + the free cap

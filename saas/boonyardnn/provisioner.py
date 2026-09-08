@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import adapter
-from .registry import ApiKey, Node, NotFoundError, Registry, User
+from .registry import ApiKey, Node, NotFoundError, Registry, RegistryError, User
 
 
 def _now_iso() -> str:
@@ -188,9 +188,24 @@ def backup_config(registry: Registry, base_path: str | Path | None = None) -> st
 
     rows: list[tuple[str, str]] = []
     if base_path is not None:
+        # ⚠ A BASE THAT CONTRIBUTES NOTHING IS A FAULT, NOT A CHOICE (2026-09-08,
+        # migration order §1.5a). `base.get("nodes", {})` collapsed "hosted-only,
+        # deliberately" and "you handed me a base and it gave me no walls" into one
+        # silent outcome — and `backup_walls.py`'s FATAL guard only fires on a *fully*
+        # empty table, which the hosted rows prevent. So an emptied base produced a
+        # backup registry with zero walls in it, a cheerful `wrote … (N nodes)`, and a
+        # nightly run that looked deliberate. Hosted-only is expressed by omitting
+        # `--base`, which is unambiguous; an empty base raises.
         with open(base_path, "rb") as fh:
             base = tomllib.load(fh)
-        rows.extend((k, str(v)) for k, v in base.get("nodes", {}).items())
+        table = base.get("nodes")
+        if not table:
+            raise RegistryError(
+                f"{base_path} has no [nodes] rows — refusing to write a config that would "
+                "silently drop every wall it was supposed to carry. For a hosted-only "
+                "config, omit --base rather than emptying it."
+            )
+        rows.extend((k, str(v)) for k, v in table.items())
     for user, node in registry.all_nodes():
         db = (registry.node_dir(user, node) / "journal.db").resolve()
         rows.append((f"{user.slug}__{node.slug}", db.as_posix()))

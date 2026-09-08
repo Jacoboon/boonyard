@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from boonyard import aggregator, init_db, log_entry, meter
-from boonyard.aggregator import Aggregator
+from boonyard.aggregator import Aggregator, AggregatorConfigError
 
 # Pinned so days_out never drifts with the wall clock.
 PINNED = date(2026, 8, 24)
@@ -214,6 +214,13 @@ class DegradedUnionTests(unittest.TestCase):
                 "junk": str(self.junk),
             }
         )
+        # ⚠ 2026-09-08: a node that is PRESENT but unreadable degrades; a path that does
+        # NOT EXIST raises (see MissingPathIsAConfigErrorTests). #76's incident was the
+        # v2 wall — present, wrong schema — so the law it taught is tested with the case
+        # it actually had, and `gone` is no longer smuggled in as a stand-in for it.
+        self.degraded = Aggregator(
+            {"good": str(self.good), "v2_wall": str(self.v2), "junk": str(self.junk)}
+        )
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -230,19 +237,19 @@ class DegradedUnionTests(unittest.TestCase):
 
     def test_recent_serves_healthy_nodes_instead_of_raising(self):
         """boonyard #76 Finding 2: this call used to raise for EVERY node."""
-        rows = self.agg.recent()
+        rows = self.degraded.recent()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], "good")
 
     def test_every_reader_survives_a_broken_node(self):
-        self.assertIsNotNone(self.agg.by_id(1))
-        self.assertEqual(len(self.agg.get_thread(1)), 1)
-        self.assertEqual(len(self.agg.search_by_tag("shared")), 1)
-        self.assertEqual(len(self.agg.search_by_tag_exact("shared")), 1)
-        self.assertEqual(len(self.agg.search_text("healthy")), 1)
-        self.assertIn("shared", {t["tag"] for t in self.agg.list_tags()})
-        self.assertEqual(self.agg.list_agents(), [{"agent": "code", "count": 1}])
-        self.assertEqual(len(self.agg.list_entry_types()), 1)
+        self.assertIsNotNone(self.degraded.by_id(1))
+        self.assertEqual(len(self.degraded.get_thread(1)), 1)
+        self.assertEqual(len(self.degraded.search_by_tag("shared")), 1)
+        self.assertEqual(len(self.degraded.search_by_tag_exact("shared")), 1)
+        self.assertEqual(len(self.degraded.search_text("healthy")), 1)
+        self.assertIn("shared", {t["tag"] for t in self.degraded.list_tags()})
+        self.assertEqual(self.degraded.list_agents(), [{"agent": "code", "count": 1}])
+        self.assertEqual(len(self.degraded.list_entry_types()), 1)
 
     def test_list_nodes_reports_health_instead_of_crashing(self):
         nodes = {n["slug"]: n for n in self.agg.list_nodes()}
@@ -258,11 +265,65 @@ class DegradedUnionTests(unittest.TestCase):
             self.agg.recent(scope=["nonexistent"])
 
     def test_all_nodes_broken_returns_empty_not_an_exception(self):
-        blind = Aggregator({"v2_wall": str(self.v2), "gone": str(self.missing)})
+        blind = Aggregator({"v2_wall": str(self.v2), "junk": str(self.junk)})
         self.assertEqual(blind.recent(), [])
         result = blind.upcoming_dates(45, today=PINNED)
         self.assertEqual(result["dates"], [])
         self.assertEqual(len(result["warnings"]), 2)
+
+
+class MissingPathIsAConfigErrorTests(unittest.TestCase):
+    """A path that does not exist is the CONFIG lying, not a node being sick (§1.5d).
+
+    Eleven of the thirteen readers return a bare list with nowhere to put a warning,
+    so a stale path made a whole wall vanish from every spanning read with no marker
+    at all — and a seat obeying the read law then concludes the topic was never
+    recorded and appends a contradicting entry to an append-only store. That damage
+    cannot be undone, only corrected, so the union refuses rather than lies.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        d = Path(self._tmp.name)
+        self.good = d / "good" / "journal.db"
+        init_db(self.good, node_name="good")
+        log_entry("code", "note", "healthy", tags="shared", db_path=self.good)
+        self.agg = Aggregator({"good": str(self.good), "gone": str(d / "gone" / "journal.db")})
+
+    def test_a_spanning_read_refuses_rather_than_dropping_the_wall(self):
+        with self.assertRaises(AggregatorConfigError) as caught:
+            self.agg.recent()
+        msg = str(caught.exception)
+        self.assertIn("gone", msg)
+        self.assertIn("does not exist", msg)
+
+    def test_it_is_a_ValueError_so_the_mcp_layer_shows_the_sentence(self):
+        # mcp.py turns ValueError into a validation error carrying str(exc) verbatim;
+        # anything else would reach a model as "internal error".
+        self.assertTrue(issubclass(AggregatorConfigError, ValueError))
+
+    def test_every_reader_refuses_not_just_the_spanning_ones(self):
+        for call in (
+            lambda: self.agg.recent(),
+            lambda: self.agg.by_id(1),
+            lambda: self.agg.get_thread(1),
+            lambda: self.agg.search_by_tag("shared"),
+            lambda: self.agg.search_by_tag_exact("shared"),
+            lambda: self.agg.search_text("healthy"),
+            lambda: self.agg.list_tags(),
+            lambda: self.agg.list_agents(),
+            lambda: self.agg.list_entry_types(),
+            lambda: self.agg.upcoming_dates(45),
+        ):
+            with self.assertRaises(AggregatorConfigError):
+                call()
+
+    def test_list_nodes_still_answers_because_it_is_how_you_FIND_the_stale_path(self):
+        nodes = {n["slug"]: n for n in self.agg.list_nodes()}
+        self.assertTrue(nodes["good"]["healthy"])
+        self.assertFalse(nodes["gone"]["healthy"])
+        self.assertIn("not found", nodes["gone"]["warning"])
 
 
 class UpcomingDatesAcrossNodesTests(unittest.TestCase):

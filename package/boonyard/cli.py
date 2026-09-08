@@ -412,20 +412,82 @@ def _umbrella_path(args) -> Path:
 
 
 def _load_umbrella_nodes(path: Path) -> dict[str, str]:
+    """The ``[nodes]`` table, or ``{}`` if the file does not exist yet.
+
+    ⚠ An UNPARSEABLE file raises (2026-09-08, migration order §1.5b). ``or {}``
+    made "there is no file yet" and "this file is damaged" the same answer, and the
+    second one then fed :func:`_write_umbrella_nodes` an empty map — turning a
+    damaged registry into an erased one, quietly, at exit 0.
+
+    Example:
+        _load_umbrella_nodes(Path("umbrella.toml"))  # -> {"umbrella": "/…/journal.db"}
+    """
     if not path.exists():
         return {}
     from .profile import _safe_load_toml
 
-    data = _safe_load_toml(path) or {}
+    data = _safe_load_toml(path)
+    if data is None:
+        raise ValueError(
+            f"{path} exists but is not readable TOML — refusing to rewrite it. "
+            "Fix or move the file; an unreadable registry is a fault, not an empty one."
+        )
     return {k: str(v) for k, v in data.get("nodes", {}).items()}
 
 
+def _toml_literal(value: str) -> str:
+    """A TOML *literal* string — no escapes, so a Windows path survives verbatim.
+
+    Example:
+        _toml_literal("C:\\\\x\\\\journal.db")  # -> "'C:\\\\x\\\\journal.db'"
+    """
+    if "'" in value:
+        raise ValueError(f"path contains a single quote and cannot be a TOML literal: {value!r}")
+    return f"'{value}'"
+
+
+def _splice_nodes_table(text: str, nodes: dict[str, str]) -> str:
+    """Replace only the ``[nodes]`` table in ``text``; every other table survives.
+
+    Example:
+        _splice_nodes_table("[nodes]\\na = 'x'\\n[offsite]\\nhost = 'p'\\n", {"b": "y"})
+    """
+    body = "\n".join(f"{name} = {_toml_literal(str(p))}" for name, p in nodes.items())
+    table = "[nodes]\n" + (body + "\n" if body else "")
+    lines = text.splitlines(keepends=True)
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.strip().replace(" ", "") == "[nodes]"), None
+    )
+    if start is None:  # no table yet — prepend, so the rest of the file is untouched
+        return table + ("\n" + text if text.strip() else "")
+    end = next(
+        (
+            j
+            for j in range(start + 1, len(lines))
+            if lines[j].lstrip().startswith("[") and not lines[j].lstrip().startswith("[[")
+        ),
+        len(lines),
+    )
+    return "".join(lines[:start]) + table + "".join(lines[end:])
+
+
 def _write_umbrella_nodes(path: Path, nodes: dict[str, str]) -> None:
+    """Read-modify-write the ``[nodes]`` table. **Everything else in the file survives.**
+
+    ⚠ 2026-09-08, migration order §1.5b. This used to start from ``lines = ["[nodes]"]``
+    and overwrite the file, so six ``umbrella add`` calls would have deleted the whole
+    ``[offsite]`` table — the Pi's host, the ``boonbackup`` user, dest, the identity key
+    path and the pinned ``known_hosts`` (umbrella #226/#227) — while printing ``added
+    <slug>`` and exiting 0, sending the next nightly run LOCAL-ONLY. Paths are emitted as
+    TOML *literal* strings rather than routed through ``Path().as_posix()`` inside a basic
+    string: a Windows path does not survive that round trip.
+
+    Example:
+        _write_umbrella_nodes(Path("umbrella.toml"), {"umbrella": "/srv/u/journal.db"})
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["[nodes]"]
-    for name, node_path in nodes.items():
-        lines.append(f'{name} = "{Path(node_path).as_posix()}"')
-    path.write_text("\n".join(lines) + "\n")
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    path.write_text(_splice_nodes_table(existing, nodes), encoding="utf-8")
 
 
 def cmd_umbrella(args) -> int:

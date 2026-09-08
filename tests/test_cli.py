@@ -218,6 +218,57 @@ class UmbrellaTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("unified", out)
 
+    def test_add_preserves_every_other_table_in_the_file(self):
+        """§1.5b. This used to start from ``lines = ["[nodes]"]`` and overwrite the
+        file, so ``umbrella add`` deleted the whole ``[offsite]`` table — the Pi's
+        host, user, dest, identity key path and pinned known_hosts — while printing
+        "added" and exiting 0. The next nightly run then went LOCAL ONLY."""
+        import tomllib
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d) / "umbrella.toml"
+            offsite = (
+                "[offsite]\nkind = 'ssh'\nhost = '192.168.1.139'\n"
+                "user = 'boonbackup'\ndest = '/home/boonbackup/boonscape'\n"
+                "identity = '_secrets/pi_backup/boonscape_backup_ed25519'\n"
+            )
+            cfg.write_text("[nodes]\nold = '/x/journal.db'\n\n" + offsite, encoding="utf-8")
+            node = str(Path(d) / "n" / "journal.db")
+            run(["--db", node, "init", "--name", "solo"])
+            self.assertEqual(run(["umbrella", "--config", str(cfg), "add", "solo", node])[0], 0)
+            after = cfg.read_text(encoding="utf-8")
+            self.assertIn(offsite, after, "[offsite] must survive byte-identical")
+            data = tomllib.loads(after)
+            self.assertEqual(set(data["nodes"]), {"old", "solo"})
+            self.assertEqual(data["offsite"]["host"], "192.168.1.139")
+            # and remove must not eat it either
+            self.assertEqual(run(["umbrella", "--config", str(cfg), "remove", "old"])[0], 0)
+            self.assertIn(offsite, cfg.read_text(encoding="utf-8"))
+
+    def test_an_unparseable_registry_is_a_fault_not_an_empty_one(self):
+        """§1.5b. ``or {}`` made "no file yet" and "this file is damaged" the same
+        answer, and the second then fed an empty map to the writer — turning a damaged
+        registry into an erased one, quietly, at exit 0."""
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d) / "umbrella.toml"
+            cfg.write_text("[nodes\nthis is not toml", encoding="utf-8")
+            node = str(Path(d) / "n" / "journal.db")
+            run(["--db", node, "init", "--name", "solo"])
+            code, _, err = run(["umbrella", "--config", str(cfg), "add", "solo", node])
+            self.assertNotEqual(code, 0)
+            self.assertIn("not readable TOML", err)
+            self.assertIn("this is not toml", cfg.read_text(encoding="utf-8"))
+
+    def test_a_windows_path_survives_the_round_trip(self):
+        """§1.5b. Paths are TOML *literal* strings now; a basic string built with
+        ``Path().as_posix()`` did not round-trip a Windows path."""
+        import tomllib
+
+        from boonyard.cli import _splice_nodes_table
+
+        win = "C:" + chr(92) + "Users" + chr(92) + "Jacob" + chr(92) + "node.db"
+        self.assertEqual(tomllib.loads(_splice_nodes_table("", {"w": win}))["nodes"]["w"], win)
+
     def test_umbrella_remove_missing(self):
         with tempfile.TemporaryDirectory() as d:
             cfg = str(Path(d) / "umbrella.toml")

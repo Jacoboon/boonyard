@@ -63,6 +63,18 @@ _IDENT = re.compile(r"^[A-Za-z0-9_-]+$")
 Scope = str | Sequence[str] | None
 
 
+class AggregatorConfigError(ValueError):
+    """The configuration names a node that cannot be served — a wrong config, not a sick node.
+
+    Subclasses ``ValueError`` deliberately: the MCP layer already turns a
+    ``ValueError`` into a validation error carrying the message verbatim, so this
+    reaches a model as the sentence below rather than as "internal error".
+
+    Example:
+        AggregatorConfigError("node 'umbrella' is configured at a path that does not exist")
+    """
+
+
 def _chunks(items: list[str], size: int) -> Iterator[list[str]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
@@ -133,15 +145,33 @@ class Aggregator:
     def _healthy_scope(self, scope: Scope) -> tuple[list[str], list[dict]]:
         """Resolve scope, then drop the nodes that can't serve a read.
 
-        Returns ``(healthy_names, warnings)``. A broken node degrades the union;
-        it never kills it (boonyard #76 Finding 2 — one v2 node crashed reads
-        across all six). The warning names the node and the reason, so the
-        failure stays loud somewhere: a reader that silently returns nothing is
-        the ``visit_watch`` failure (jrhood #174), not a fix.
+        Returns ``(healthy_names, warnings)``. A node that is PRESENT but cannot be
+        read degrades the union; it never kills it (boonyard #76 Finding 2 — one v2
+        node crashed reads across all six). The warning names the node and the
+        reason, so the failure stays loud somewhere: a reader that silently returns
+        nothing is the ``visit_watch`` failure (jrhood #174), not a fix.
+
+        ⚠ **A PATH THAT DOES NOT EXIST RAISES** (2026-09-08, migration order §1.5d).
+        The two are different faults and only one of them is the node's. A missing
+        file is the *configuration* lying about what this door serves, and eleven of
+        the thirteen readers return a bare list with nowhere to put a warning — so a
+        stale path made a whole wall vanish from every spanning read with **no marker
+        at all**, and a seat obeying the read law ("search before you assert")
+        concluded the topic was never recorded and appended a contradicting entry to
+        an append-only store. That damage cannot be undone, only corrected. #76's law
+        is preserved exactly where #76 lived — a v2/corrupt node still degrades — and
+        tightened only for the case #76 never covered.
         """
         healthy: list[str] = []
         warnings: list[dict] = []
         for name in self._resolve_scope(scope):
+            path = self._nodes[name]
+            if not Path(path).exists():
+                raise AggregatorConfigError(
+                    f"node {name!r} is configured at a path that does not exist: {path}. "
+                    "A union that silently drops a wall is a wrong answer, not a slower "
+                    "one — fix the registry entry or remove the node."
+                )
             reason = self._probe(name)
             if reason is None:
                 healthy.append(name)
@@ -441,6 +471,25 @@ def aggregator(
         return Aggregator(nodes)
     if config_path is None:
         raise ValueError("aggregator requires a config_path or a nodes mapping")
-    data = _safe_load_toml(Path(config_path)) or {}
-    node_map = {k: str(v) for k, v in data.get("nodes", {}).items()}
+    # ⚠ AN UNREADABLE REGISTRY IS AN ENVIRONMENT ERROR, NOT AN EMPTY ONE (2026-09-08,
+    # migration order §1.5c). `_safe_load_toml(...) or {}` turned a missing or renamed
+    # umbrella.toml into a zero-node Aggregator that CONSTRUCTS SUCCESSFULLY, and every
+    # reader then returned clean empty success at exit 0 — including `upcoming_dates`,
+    # which would report "no dates" for every overdue kill-date on all six walls,
+    # indefinitely, from the exact reader built so a past date can never drop out. With
+    # zero nodes `_healthy_scope` never probes, so even the two readers that do carry
+    # warnings return `warnings: []`. An empty [nodes] table raises for the same reason:
+    # it produces the identical zero-node door, and nobody writes one on purpose.
+    path = Path(config_path)
+    if not path.exists():
+        raise AggregatorConfigError(f"aggregator config not found: {path}")
+    data = _safe_load_toml(path)
+    if data is None:
+        raise AggregatorConfigError(f"aggregator config is not readable TOML: {path}")
+    table = data.get("nodes")
+    if table is None:
+        raise AggregatorConfigError(f"aggregator config has no [nodes] table: {path}")
+    if not table:
+        raise AggregatorConfigError(f"aggregator config's [nodes] table is empty: {path}")
+    node_map = {k: str(v) for k, v in table.items()}
     return Aggregator(node_map)
