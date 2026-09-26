@@ -9,6 +9,10 @@ the browser shows is byte-for-byte what a connected seat would see. Writes:
 * ``POST …/entries/{id}/retag`` — the audited tags-only mutation (ADR-0005), with a reason.
 * ``POST …/delete`` — tombstone the NODE (arch 05's grace shape): the directory moves
   aside, its keys are revoked, nothing is destroyed. Typed confirmation required.
+* ``POST …/profile`` and ``…/profile/seats`` — the node's ``boonyard.toml``, edited as an
+  audited change (boonyard #168): the package validates it, swaps it atomically and
+  records before/after/reason in ``meta_log``. A hosted node has no file its owner can
+  reach, so this page is the only way to register a seat after birth.
 
 What is deliberately absent: editing an entry, deleting an entry. "Edit" is a new entry
 threaded to the old one — the reply form on every entry page does exactly that.
@@ -21,10 +25,14 @@ Routes (relative to ``/app/nodes/{slug}``):
     POST /entries/{id}/retag
     GET  /search?q=… | ?tag=…
     POST /delete           tombstone (form field ``confirm`` must equal the slug)
+    GET  /profile          seats, entry types, namespaces, the TOML, its change history
+    POST /profile          replace the TOML (``reason`` and the ``sha`` it was read at)
+    POST /profile/seats    register one seat (``seat``, ``lane``)
 """
 
 from __future__ import annotations
 
+import difflib
 from typing import TYPE_CHECKING
 
 from . import adapter, provisioner
@@ -41,6 +49,8 @@ SEARCH_LIMIT = 50
 MAX_CONTENT = 64 * 1024
 MAX_TAGS = 512
 MAX_REASON = 256
+MAX_LANE = 200
+HISTORY_LIMIT = 20
 DEFAULT_AGENT = "human"
 _HINT = '<p class="muted">Type something.</p>'
 
@@ -124,6 +134,25 @@ def _write_form(
     )
 
 
+def _one_newline_style(text: str) -> str:
+    """A browser submits a textarea with CRLF; the file on the droplet is LF."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text if not text or text.endswith("\n") else text + "\n"
+
+
+def _diff(before: str, after: str) -> str:
+    lines = difflib.unified_diff(
+        before.splitlines(), after.splitlines(), "before", "after", lineterm=""
+    )
+    return "\n".join(list(lines)[2:])  # drop the ---/+++ header; the panel says which is which
+
+
+_TEXTAREA = (
+    "width:100%;font-family:var(--mono);font-size:.8rem;padding:.5rem;background:var(--bg);"
+    "color:var(--text);border:1px solid var(--border);border-radius:4px"
+)
+
+
 # --------------------------------------------------------------------------
 # the browser
 # --------------------------------------------------------------------------
@@ -140,9 +169,10 @@ class NodeBrowser:
         user = app.registry.get_user(account.slug)
         self.node_dir = app.registry.node_dir(user, node)
         self.db_path = self.node_dir / "journal.db"
+        self.profile_path = self.node_dir / "boonyard.toml"
         self.server = adapter.make_server(
             self.db_path,
-            profile_path=self.node_dir / "boonyard.toml",
+            profile_path=self.profile_path,
             meter_path=self.node_dir / "meter.db",
         )
 
@@ -197,6 +227,7 @@ class NodeBrowser:
             f"born {_esc(_date(info.get('created_at')))}"
             f" · last write {_esc(info.get('last_write_at') or '-')}<br>"
             f'<span class="muted">MCP URL <code>{_esc(mcp_url)}</code> · '
+            f'<a href="{self.base}/profile">seats &amp; profile</a> · '
             f'<a href="{self.base}/export">export (.zip)</a></span></div>'
             "<h2>write</h2>"
             f"{_write_form(self.slug, self.csrf, self._entry_types())}"
@@ -317,6 +348,130 @@ class NodeBrowser:
             return self._page("Refused", f'<p class="err">{_esc(exc)}</p>', status=400)
         return self.app._redirect(f"{self.base}/entries/{entry_id}?m=retagged")
 
+    # -- the profile (boonyard.toml) ----------------------------------------------
+    def profile_page(
+        self,
+        req: Request,
+        *,
+        error: str | None = None,
+        draft: str | None = None,
+        status: int = 200,
+    ) -> Response:
+        text, sha = adapter.read_profile(self.profile_path)
+        summary = adapter.profile_summary(self.profile_path)
+        history = adapter.profile_changes(self.db_path, limit=HISTORY_LIMIT)
+        flash = self.app._flash_text(req)
+        csrf = f'<input type="hidden" name="csrf" value="{_esc(self.csrf)}">'
+        none = '<span class="muted">-</span>'
+        seats = "".join(
+            f"<tr><td><code>{_esc(seat)}</code></td><td>{_esc(lane) if lane else none}</td></tr>"
+            for seat, lane in summary["seats"].items()
+        )
+        namespaces = "".join(
+            f"<tr><td><code>{_esc(ns)}:</code></td><td>{_esc(doc) if doc else none}</td></tr>"
+            for ns, doc in summary["namespaces"].items()
+        )
+        types = " ".join(f"<code>{_esc(t)}</code>" for t in summary["entry_types"])
+        changes = "".join(
+            '<div class="panel">'
+            f'<span class="muted">{_esc(h.get("timestamp", ""))}</span> · '
+            f"<b>{_esc(h.get('actor', ''))}</b> · {_esc(h.get('reason', ''))}"
+            '<details><summary class="muted">what changed</summary>'
+            '<pre style="white-space:pre-wrap;font-family:var(--mono);font-size:.75rem;'
+            f'margin:.5rem 0">{_esc(_diff(h.get("before", ""), h.get("after", "")))}</pre>'
+            "</details></div>"
+            for h in history
+        )
+        no_changes = '<p class="muted">No changes since this node was born.</p>'
+        body = (
+            f"{'<p class=\"ok\">' + _esc(flash) + '</p>' if flash else ''}"
+            f"{'<p class=\"err\">' + _esc(error) + '</p>' if error else ''}"
+            "<p class=\"muted\">This node's <code>boonyard.toml</code>: the seats it knows, the "
+            "entry types it expects, the tag namespaces it declares. It advises and never "
+            "refuses: a write from a seat that is not registered still lands, with a warning. "
+            "Every change here is recorded in the node's meta_log with your name and your "
+            "reason, and applies from the next call through your connector.</p>"
+            f"<h2>seats</h2><table><tr><th>seat</th><th>lane</th></tr>{seats}</table>"
+            f'<form method="post" action="{self.base}/profile/seats" class="panel">{csrf}'
+            '<label for="seat">register a seat: the agent name it writes as '
+            "(lowercase letters, digits, - or _)</label>"
+            '<input id="seat" name="seat" type="text" maxlength="40" '
+            'pattern="[a-z0-9][a-z0-9_\\-]*" autocomplete="off" required>'
+            '<label for="lane">lane: one line on what this seat does here</label>'
+            f'<input id="lane" name="lane" type="text" maxlength="{MAX_LANE}" required>'
+            '<label for="seat-reason">reason (optional)</label>'
+            f'<input id="seat-reason" name="reason" type="text" maxlength="{MAX_REASON}">'
+            '<button type="submit">Register seat</button></form>'
+            f"<h2>entry types</h2><p>{types}</p>"
+            f"<h2>tag namespaces</h2><table>{namespaces}</table>"
+            "<h2>edit the file</h2>"
+            f'<form method="post" action="{self.base}/profile" class="panel">{csrf}'
+            f'<input type="hidden" name="sha" value="{_esc(sha)}">'
+            "<label for=\"toml\">boonyard.toml: checked before it is saved. The [node] table "
+            "is the node's identity and cannot change.</label>"
+            '<textarea id="toml" name="toml" rows="18" spellcheck="false" '
+            f'style="{_TEXTAREA}">{_esc(text if draft is None else draft)}</textarea>'
+            '<label for="reason">reason</label>'
+            f'<input id="reason" name="reason" type="text" maxlength="{MAX_REASON}" required>'
+            '<button type="submit">Save profile</button></form>'
+            f"<h2>history</h2>{changes or no_changes}"
+        )
+        return self._page("Profile", body, status=status, nav="profile")
+
+    def save_profile(self, req: Request) -> Response:
+        form = req.form
+        text = _one_newline_style(form.get("toml", ""))
+        reason = form.get("reason", "").strip()[:MAX_REASON]
+        if not reason:
+            return self.profile_page(
+                req, error="A profile change needs a reason.", draft=text, status=400
+            )
+        try:
+            adapter.save_profile(
+                self.db_path,
+                self.profile_path,
+                text,
+                reason=reason,
+                actor=self.account.slug,
+                expected_sha256=form.get("sha", ""),
+            )
+        except adapter.ProfileConflict:
+            return self.profile_page(
+                req,
+                error="The profile changed after you opened this page. Your draft is below; "
+                "saving it again replaces the current file, whose last change is in the history.",
+                draft=text,
+                status=409,
+            )
+        except ValueError as exc:
+            return self.profile_page(req, error=str(exc), draft=text, status=400)
+        return self.app._redirect(f"{self.base}/profile?m=profile-saved")
+
+    def register_seat(self, req: Request) -> Response:
+        form = req.form
+        seat = form.get("seat", "").strip()
+        lane = form.get("lane", "")
+        reason = form.get("reason", "").strip()[:MAX_REASON] or f"register seat {seat}"
+        text, sha = adapter.read_profile(self.profile_path)
+        try:
+            adapter.save_profile(
+                self.db_path,
+                self.profile_path,
+                adapter.add_seat(text, seat, lane),
+                reason=reason,
+                actor=self.account.slug,
+                expected_sha256=sha,
+            )
+        except adapter.ProfileConflict:
+            return self.profile_page(
+                req,
+                error="The profile changed while saving; nothing was written. Try again.",
+                status=409,
+            )
+        except ValueError as exc:
+            return self.profile_page(req, error=str(exc), status=400)
+        return self.app._redirect(f"{self.base}/profile?m=seat-registered")
+
     def delete_node(self, req: Request) -> Response:
         if req.form.get("confirm", "").strip() != self.slug:
             return self.node_page(
@@ -333,7 +488,7 @@ class NodeBrowser:
 # dispatch (called from WebApp.handle for /nodes/{slug}[/…])
 # --------------------------------------------------------------------------
 def dispatch(app: WebApp, req: Request, slug: str, rest: list[str]) -> Response:
-    """Route ``/nodes/{slug}[/entries[/{id}[/retag]] | /search | /delete]``."""
+    """Route ``/nodes/{slug}[/entries[/{id}[/retag]] | /search | /delete | /profile[/seats]]``."""
     needs_csrf = req.method == "POST"
     found = app._require(req, csrf=needs_csrf)
     if not hasattr(found, "account"):
@@ -356,6 +511,13 @@ def dispatch(app: WebApp, req: Request, slug: str, rest: list[str]) -> Response:
         return browser.search_page(req)
     if head == "delete" and len(rest) == 1 and post:
         return browser.delete_node(req)
+    if head == "profile":
+        if len(rest) == 1:
+            if get:
+                return browser.profile_page(req)
+            return browser.save_profile(req) if post else app._method_not_allowed("GET, POST")
+        if len(rest) == 2 and rest[1] == "seats":
+            return browser.register_seat(req) if post else app._method_not_allowed("POST")
     if head == "entries":
         if len(rest) == 1:
             return browser.write_entry(req) if post else app._method_not_allowed("POST")

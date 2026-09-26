@@ -21,4 +21,4 @@ No billing, no ``_aggregate``, no teams — Phase 3. ``adapter.py`` is
 the only module that imports ``boonyard``.
 """
 
-__version__ = "0.3.0.dev0"
+__version__ = "0.4.0.dev0"

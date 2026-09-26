@@ -21,6 +21,7 @@ from .profile import (
     resolve_db_path,
     resolve_profile_path,
 )
+from .profile_change import change_profile, profile_history
 from .query import (
     audit_doctor,
     by_id,
@@ -40,7 +41,7 @@ from .query import (
 from .retag import retag_entry
 from .views import ghosts
 
-__version__ = "3.5.1"
+__version__ = "3.6.0"
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -52,6 +53,7 @@ __all__ = [
     "audit_doctor",
     "backup_node",
     "by_id",
+    "change_profile",
     "connect",
     "default_profile",
     "entry_heat",
@@ -69,6 +71,7 @@ __all__ = [
     "log_entry",
     "log_skill_revision",
     "node_info",
+    "profile_history",
     "read_stats",
     "recent",
     "reindex",

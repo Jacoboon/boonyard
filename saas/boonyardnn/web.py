@@ -56,12 +56,16 @@ class _Session(NamedTuple):
     csrf: str
 
 
-_BROWSER_HEADS = frozenset({"entries", "search", "delete"})
+_BROWSER_HEADS = frozenset({"entries", "search", "delete", "profile"})
 
 _FLASH = {
     "node-removed": "Node tombstoned. Its keys are revoked; nothing was destroyed.",
     "entry-written": "Entry written.",
     "retagged": "Tags replaced; the change is in the node's meta_log.",
+    "profile-saved": "Profile saved and recorded in the node's meta_log. It applies from the "
+    "next call through your connector.",
+    "seat-registered": "Seat registered and recorded in the node's meta_log. It applies from "
+    "the next call through your connector.",
     "node-created": "Node created. Mint a key to connect a seat to it.",
     "key-revoked": "Key revoked. Any seat using it is now refused.",
     "password-set": "Password saved. You can sign in with it or with an emailed link.",
@@ -678,6 +682,7 @@ class WebApp:
             f'<div class="panel"><b><code>{_esc(node.slug)}</code></b> '
             f'<span class="muted">created {_esc(_date(node.created_at))}</span>'
             f' · <a href="{PREFIX}/nodes/{_esc(node.slug)}">open</a>'
+            f' · <a href="{PREFIX}/nodes/{_esc(node.slug)}/profile">seats &amp; profile</a>'
             f' · <a href="{PREFIX}/nodes/{_esc(node.slug)}/export">export (.zip)</a>'
             # The per-node door is the NARROW tool now, not the default. Folded away so
             # the account door above is what a new user reaches for, but kept one click

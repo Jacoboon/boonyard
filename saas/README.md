@@ -24,6 +24,14 @@ and the front desk around the substrate.
   retag with a reason (the audited mutation), export, and tombstone a node with a typed
   confirmation. There is no entry edit and no entry delete (ADR-0005): "edit" is a reply
   threaded to the old entry, one click.
+- **Profile editor** (`/app/nodes/{slug}/profile`) — the node's `boonyard.toml`, which a
+  hosted user has no other way to reach: its seats, entry types and tag namespaces, a
+  one-line "register a seat" form, the whole file in an editor, and its change history
+  with diffs. Every change goes through the package's `change_profile`: validated first
+  (TOML, a readable profile, `[node]` unchanged), refused if the file moved since the page
+  was read, swapped atomically, and recorded in the node's `meta_log` as `profile_change`
+  with the actor and reason. It applies from the next call through the connector. Not an
+  MCP tool, on purpose (boonyard #168).
 - **Limits** — ADR-0008's per-key rate limits (Free 30 writes / 600 reads per minute,
   Pro 600 / 6000, burst 10×; 429 + `Retry-After`) and the Free cap of 10,000 entries per
   node (403 `quota_exceeded`; export or start another node). Founders are Pro for a year.

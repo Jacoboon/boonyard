@@ -7,6 +7,49 @@ Versioning follows [ADR-0002 / architecture 04](docs/architecture/04_distributio
 major version is the schema version.** A package on `3.x` reads and writes v3 nodes. A major
 bump means a schema rollover, never a marketing decision.
 
+## [3.6.0] — 2026-09-26
+
+A node's profile can be changed as an audited operation, and the hosted dashboard now
+does it. Professor's word, boonyard #168. No schema change: `meta_log` has named the
+`profile_change` op since the v3 DDL was written; this is the first code to write it.
+
+### Why
+A node's `boonyard.toml` (its seat registry, entry types and tag namespaces) lives beside
+the node file, not in it. The package wrote it at `init` and `import` and nowhere else, so
+a hosted user who is not the operator had **no way** to register a seat after the node was
+born. The first time it mattered (tg-dev on holloway, #65–#66@holloway), it took a shell on
+the droplet and an unaudited `sed`.
+
+### Added
+- `change_profile(profile_path, new_text, reason, actor, *, expected_sha256=None, …)`, the
+  profile's counterpart of `retag_entry`. The new text must parse as TOML, build a profile,
+  and leave `[node]` (the node's name and schema version) exactly as it was. It is swapped
+  in atomically with the file's mode kept, under the node's write lock, and one `meta_log`
+  row records before, after, both sha256s, the reason and the actor. If that row cannot be
+  committed, the old file is put back: the file never says what the audit does not. Pass
+  the `expected_sha256` you read at and an edit made in between (by hand, by another tab)
+  is refused with `ProfileConflict` instead of being overwritten.
+- `profile_history(…)`: the node's profile changes, newest first, payloads decoded.
+- `boonyard.profile_change.add_seat(text, seat, lane)`: registers one seat under
+  `[agents]` and keeps every other byte of the file. The result is re-parsed and must
+  equal the old profile plus exactly that seat, so a file it cannot edit safely is
+  refused, never mangled.
+
+### Not added, on purpose
+- **No MCP tool.** The profile says which agents a node knows. An agent that could
+  rewrite it could register itself through the door the profile governs. Like retag, this
+  is a library operation, and the hosted dashboard calls it for a signed-in human.
+
+### Hosted (`boonyardnn` 0.4.0.dev0)
+- `/app/nodes/{slug}/profile`: seats with their lanes, entry types, namespaces, a
+  "register a seat" form, the file in an editor, and the change history with diffs. It is
+  linked from the dashboard and the node page. Requires sign-in and CSRF; another user's
+  node is a 404.
+
+### Tests
+392 (was 377): 15 for the package (two proven red with their guard removed) and 5 for
+the served editor (one proven red without the CRLF normalisation).
+
 ## [3.5.1] — 2026-09-08
 
 Documentation only; no code change to the package's behaviour.

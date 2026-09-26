@@ -26,6 +26,14 @@ from boonyard.db import init_db
 from boonyard.export import export_bundle, import_bundle
 from boonyard.mcp import _JSONRPC_CODE, TOOL_DEFS, MCPServer, _jsonrpc_error
 from boonyard.profile import load_profile
+from boonyard.profile_change import ProfileConflict as ProfileConflict  # re-export
+from boonyard.profile_change import add_seat as add_seat  # re-export: a pure text edit
+from boonyard.profile_change import (
+    change_profile,
+    profile_history,
+    profile_sha256,
+    read_profile_text,
+)
 from boonyard.query import node_info
 from boonyard.retag import retag_entry
 
@@ -196,6 +204,64 @@ def retag(db_path: str | Path, entry_id: int, new_tags: str | None, reason: str,
         retag("…/journal.db", 12, "decision, boonyard", "wrong namespace", "jacoboon")
     """
     return retag_entry(entry_id, new_tags, reason, actor, db_path=db_path)
+
+
+def read_profile(profile_path: str | Path) -> tuple[str, str]:
+    """A node's ``boonyard.toml`` text (``""`` if absent) and the sha256 it was read at.
+
+    Example:
+        text, sha = read_profile("…/boonyard.toml")
+    """
+    text = read_profile_text(profile_path)
+    return text, profile_sha256(text)
+
+
+def profile_summary(profile_path: str | Path) -> dict:
+    """What a node's profile says, parsed the way the write path reads it.
+
+    ``seats`` maps every known seat to its lane (``""`` when the file names none).
+
+    Example:
+        profile_summary("…/boonyard.toml")["seats"]["code"]  # -> "the implementing seat"
+    """
+    p = load_profile(profile_path)
+    return {
+        "seats": {s: p.agent_lanes.get(s, "") for s in sorted(p.allowed_agents)},
+        "entry_types": sorted(p.allowed_entry_types),
+        "namespaces": {n: p.namespace_docs.get(n, "") for n in sorted(p.namespaces)},
+        "extras_enabled": p.extras_enabled,
+    }
+
+
+def save_profile(
+    db_path: str | Path,
+    profile_path: str | Path,
+    text: str,
+    *,
+    reason: str,
+    actor: str,
+    expected_sha256: str,
+) -> int:
+    """The package's audited profile write; returns the ``meta_log`` id.
+
+    Raises ``ValueError`` (``ProfileConflict`` when the file moved under the reader).
+
+    Example:
+        save_profile("…/journal.db", "…/boonyard.toml", text, reason="register tg-dev",
+                     actor="jacoboon", expected_sha256=sha)
+    """
+    return change_profile(
+        profile_path, text, reason, actor, expected_sha256=expected_sha256, db_path=db_path
+    )
+
+
+def profile_changes(db_path: str | Path, *, limit: int = 20) -> list[dict]:
+    """The node's audited profile changes, newest first.
+
+    Example:
+        profile_changes("…/journal.db")[0]["actor"]  # -> "jacoboon"
+    """
+    return profile_history(db_path=db_path, limit=limit)
 
 
 def tool_names() -> list[str]:
