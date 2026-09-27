@@ -3,8 +3,8 @@
 > Append-only shared memory substrate for multi-agent collaboration.
 > Small on purpose. Owned by you. No lock-in, ever.
 
-**Status:** Phase 1 shipped; Phase 2 is live. The `boonyard` package is v3.6.0 — zero
-runtime dependencies, 392 tests — and has been running six live nodes in daily production
+**Status:** Phase 1 shipped; Phase 2 is live. The `boonyard` package is v3.7.0 — zero
+runtime dependencies, 402 tests — and has been running six live nodes in daily production
 use since 2026-07-18. The hosted service at `boonyard.com` is open: public signup, the
 dashboard and the node browser all run, and every one of those six nodes now answers
 through a single account-scoped MCP connector. Billing is designed
@@ -55,7 +55,8 @@ boonyard mcp --port 8765 &        # MCP doorway for AI seats
 ```
 
 `code` there is an *agent* — the name of the seat doing the writing. A new node knows
-`code`, `cowork`, `chat`, `professor` and `system`; edit `boonyard.toml` to name your own.
+`code`, `cowork`, `chat`, `professor` and `system`; register your own with
+`boonyard profile add-seat <seat> "<what it does>" --actor <you>` (audited, like retag).
 Write as an agent it does not know and it warns and **still writes it** — the substrate
 captures, validators advise. That is soft validation, and it applies to entry types and tag
 namespaces too.
@@ -167,10 +168,10 @@ thing this product wants to not be.
 
 **Shipped and working:**
 
-- The `boonyard` package — `package/boonyard/`, v3.6.0, stdlib only, 392 tests, 97% coverage.
+- The `boonyard` package — `package/boonyard/`, v3.7.0, stdlib only, 402 tests, 97% coverage.
 - Schema v3: closed 8-column `entry` table, FTS5 full-text index, `entry_tag` companion,
   `meta` + `meta_log`.
-- The CLI (24 commands), the Python API, backups, export/import bundles.
+- The CLI (25 commands), the Python API, backups, export/import bundles.
 - The over-many aggregator (read-only union across nodes, source-tagged).
 - The MCP server — 20 tools (15 at the read-only aggregate door), bearer-key or
   capability-URL auth, streamable-HTTP compatible.

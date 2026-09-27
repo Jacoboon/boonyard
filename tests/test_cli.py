@@ -303,6 +303,14 @@ class DocsMatchTheCodeTests(unittest.TestCase):
         self.assertTrue(counts, "no public surface states a tool count")
         self.assertIn(str(len(TOOL_DEFS)), counts)
 
+    def test_every_public_cli_command_count_matches_the_parser(self):
+        """ "24 CLI commands" was hand-kept like the rest, and 3.7.0 made it 25."""
+        import argparse
+
+        (subs,) = [a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction)]
+        counts = {int(c) for c in self._all_surfaces(r"(\d+) (?:CLI )?commands")}
+        self.assertEqual(counts, {len(subs.choices)}, f"surfaces say {counts}")
+
     def test_the_readme_adr_count_matches_the_adr_directory(self):
         on_disk = len(list((self.ROOT / "docs" / "adr").glob("0*.md")))
         counts = {int(c) for c in self._all_surfaces(r"(\d+) ADRs")}
@@ -570,6 +578,93 @@ class MeterCliTests(CliTestCase):
         self.assertEqual(code, 0)
         self.assertIn("reads : 0", out)
         self.assertIn("meter_absent", err)
+
+
+class ProfileCliTests(CliTestCase):
+    """`boonyard profile` — the self-hoster's door to the audited profile write (#169)."""
+
+    def _toml(self) -> Path:
+        return Path(self.db).parent / "boonyard.toml"
+
+    def test_show_add_seat_history(self):
+        code, out, _ = run(["--db", self.db, "profile", "show"])
+        self.assertEqual(code, 0)
+        self.assertIn("code — the implementing seat", out)
+        self.assertIn(str(self._toml()), out)
+        code, out, _ = run(
+            [
+                "--db",
+                self.db,
+                "profile",
+                "add-seat",
+                "tg-dev",
+                "the Tea Guru dev seat",
+                "--actor",
+                "jacoboon",
+            ]
+        )
+        self.assertEqual(code, 0, out)
+        self.assertIn("meta_log #", out)
+        self.assertIn('tg-dev = "the Tea Guru dev seat"', self._toml().read_text("utf-8"))
+        code, out, _ = run(["--db", self.db, "profile", "history", "--diff"])
+        self.assertEqual(code, 0)
+        self.assertIn("jacoboon — register seat tg-dev", out)
+        self.assertIn('+tg-dev = "the Tea Guru dev seat"', out)
+
+    def test_set_replaces_the_file_from_a_path(self):
+        new = Path(self._tmp.name) / "new.toml"
+        new.write_text(self._toml().read_text("utf-8") + "\n[x]\na = 1\n", encoding="utf-8")
+        code, out, err = run(
+            ["--db", self.db, "profile", "set", str(new), "--actor", "a", "--reason", "x"]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self._toml().read_text("utf-8"), new.read_text("utf-8"))
+
+    def test_refusals_are_usage_errors_and_change_nothing(self):
+        before = self._toml().read_text("utf-8")
+        bad = Path(self._tmp.name) / "bad.toml"
+        bad.write_text("[agents\n", encoding="utf-8")
+        for argv in (
+            ["profile", "add-seat", "code", "again", "--actor", "a"],
+            ["profile", "add-seat", "Bad Name", "x", "--actor", "a"],
+            ["profile", "set", str(bad), "--actor", "a", "--reason", "x"],
+            [
+                "profile",
+                "set",
+                str(Path(self._tmp.name) / "missing.toml"),
+                "--actor",
+                "a",
+                "--reason",
+                "x",
+            ],
+        ):
+            with self.subTest(argv=argv[1:3]):
+                code, _out, err = run(["--db", self.db, *argv])
+                self.assertEqual(code, 2)
+                self.assertIn("error:", err)
+        self.assertEqual(self._toml().read_text("utf-8"), before)
+        self.assertIn("(no profile changes)", run(["--db", self.db, "profile", "history"])[1])
+
+    def test_it_edits_the_nodes_own_profile_not_one_found_in_the_cwd(self):
+        """A stray ``node/boonyard.toml`` under the working directory (this repo has
+        one) must not be the file a write for ANOTHER node lands in."""
+        import os
+
+        with tempfile.TemporaryDirectory() as cwd:
+            stray = Path(cwd) / "node" / "boonyard.toml"
+            stray.parent.mkdir()
+            stray.write_text('[agents]\nother = "x"\n', encoding="utf-8")
+            here = os.getcwd()
+            os.chdir(cwd)
+            try:
+                code, _out, err = run(
+                    ["--db", self.db, "profile", "add-seat", "tg-dev", "tea", "--actor", "a"]
+                )
+            finally:
+                os.chdir(here)
+            self.assertNotIn("tg-dev", stray.read_text("utf-8"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("tg-dev", self._toml().read_text("utf-8"))
 
 
 if __name__ == "__main__":

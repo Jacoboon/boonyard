@@ -173,5 +173,26 @@ class DoctorModelTagTests(unittest.TestCase):
         self.assertEqual(set(info["profile"]["allowed_agents"]), {"code", "cowork"})
 
 
+class ProfileWatcherTests(unittest.TestCase):
+    """A long-running server re-reads a changed profile (boonyard #169)."""
+
+    def test_rereads_only_when_the_file_changes(self):
+        from boonyard.profile import ProfileWatcher
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "boonyard.toml"
+            path.write_text('[agents]\ncode = "builds"\n', encoding="utf-8")
+            watch = ProfileWatcher(path)
+            first = watch.get()
+            self.assertEqual(first.allowed_agents, {"code"})
+            self.assertIs(watch.get(), first)  # unchanged file: no re-read
+            path.write_text('[agents]\ncode = "builds"\ntg-dev = "tea"\n', encoding="utf-8")
+            self.assertEqual(watch.get().allowed_agents, {"code", "tg-dev"})
+            path.write_text("[agents\n", encoding="utf-8")  # broken: defaults, no crash
+            self.assertEqual(watch.get().allowed_agents, DEFAULT_AGENTS)
+            path.unlink()  # gone: defaults
+            self.assertEqual(watch.get().allowed_agents, DEFAULT_AGENTS)
+
+
 if __name__ == "__main__":
     unittest.main()

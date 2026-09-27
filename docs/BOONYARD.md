@@ -39,7 +39,8 @@ Rules of the ritual: `agent` is your **seat** (a role: `code`, `cowork`, `chat`,
 seats always carry a `model:` tag with the exact model string. Corrections and
 follow-ups use `--related`. If `boonyard doctor` nags you, it's advisory — the
 substrate never rejects a soft-validation miss, but a recurring warning is a
-signal to fix your habit or register the new value in the profile.
+signal to fix your habit or register the new value in the profile
+(`boonyard profile add-seat`, or *seats & profile* on a hosted node's page).
 
 ## The five conventions that travel (canon; identical in every node)
 
@@ -69,6 +70,20 @@ In a repo with a vendored package, invoke as `python -m boonyard ...`.
 | `boonyard log <agent> <entry_type> <content> [--tags a,b,c] [--related ID] [--extras JSON]` | Append one entry. The universal write. Tags are CSV; `--related` threads to a prior entry; `--extras` only if the profile enables extras. |
 | `boonyard skill new <slug>` | Start (or revise) a skill — renders the SKILL/WHEN/STEPS/GOTCHAS template, root-anchored per ADR-0004. |
 | `boonyard retag <id> <new_tags> --reason "<why>" --actor <who>` | The ONLY mutation. Rewrites one entry's tags, logs a meta_log audit row. Content/agent/type are untouchable. |
+
+### The profile (`boonyard.toml`)
+
+Every change here is audited like a retag: validated first, swapped atomically, and
+recorded in the node's `meta_log` (`profile_change`) with before, after, reason and
+actor. The file is the one beside the node's `journal.db` (or `--profile`). A running
+`boonyard mcp` picks the change up on its next call, with no restart.
+
+| Command | What it does |
+|---|---|
+| `boonyard profile show` | The seats (with their lanes), entry types and tag namespaces the node knows. |
+| `boonyard profile add-seat <seat> "<lane>" --actor <who> [--reason "<why>"]` | Register one seat under `[agents]`; every other byte of the file is kept. |
+| `boonyard profile set <file\|-> --actor <who> --reason "<why>"` | Replace the whole file. `[node]` (name, schema version) cannot change. |
+| `boonyard profile history [n] [--diff]` | The audited changes, newest first. |
 
 ### Reading
 
@@ -105,7 +120,7 @@ In a repo with a vendored package, invoke as `python -m boonyard ...`.
 
 | Command | What it does |
 |---|---|
-| `boonyard mcp [--port P] [--host H] [--key KEY]` | Serve this node over MCP (stdlib JSON-RPC/HTTP). No `--key` = open localhost; with a key (or `BOONYARD_MCP_KEY` env var, preferred — keeps it out of argv) = bearer auth enforced. |
+| `boonyard mcp [--port P] [--host H] [--key KEY]` | Serve this node over MCP (stdlib JSON-RPC/HTTP). No `--key` = open localhost; with a key (or `BOONYARD_MCP_KEY` env var, preferred — keeps it out of argv) = bearer auth enforced. A changed `boonyard.toml` applies from the next call. |
 | `boonyard mcp --config umbrella.toml` | Serve a READ-ONLY over-many aggregator instead of one node. |
 
 ### Over-many (the boonscape view)

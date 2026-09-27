@@ -10,8 +10,10 @@ nothing); 2 a usage / validation error.
 """
 
 import argparse
+import difflib
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -25,6 +27,13 @@ from .log import log_entry
 from .meter import default_meter_path
 from .meter import read_stats as _read_stats
 from .profile import load_profile, resolve_db_path, resolve_profile_path
+from .profile_change import (
+    add_seat,
+    change_profile,
+    profile_history,
+    profile_sha256,
+    read_profile_text,
+)
 from .retag import retag_entry
 
 EXIT_OK = 0
@@ -335,6 +344,71 @@ def cmd_retag(args) -> int:
     return EXIT_OK
 
 
+def _profile_target(args) -> Path:
+    """The profile ``boonyard profile`` reads and writes: ``--profile``, else
+    ``$BOONYARD_PROFILE_PATH``, else the one beside the node file.
+
+    Deliberately NOT the cwd search the read commands use: the audit row lands in the
+    node's ``meta_log``, so the file it describes must be that node's own. A cwd hit
+    (a stray ``node/boonyard.toml`` in whatever directory you stand in) would edit one
+    node's profile and record it in another's history.
+    """
+    if getattr(args, "profile", None):
+        return Path(args.profile)
+    if os.environ.get("BOONYARD_PROFILE_PATH"):
+        return Path(os.environ["BOONYARD_PROFILE_PATH"])
+    return _db(args).parent / "boonyard.toml"
+
+
+def cmd_profile(args) -> int:
+    path = _profile_target(args)
+    if args.profile_cmd == "show":
+        profile = load_profile(path)
+        print(f"profile: {path}{'' if path.exists() else ' (absent: built-in defaults)'}")
+        print("seats:")
+        for seat in sorted(profile.allowed_agents):
+            lane = profile.agent_lanes.get(seat, "")
+            print(f"  {seat}{' — ' + lane if lane else ''}")
+        print(f"entry types: {', '.join(sorted(profile.allowed_entry_types))}")
+        print(f"tag namespaces: {', '.join(sorted(profile.namespaces))}")
+        return EXIT_OK
+    if args.profile_cmd == "history":
+        rows = profile_history(db_path=_db(args), limit=args.n)
+        if not rows:
+            print("(no profile changes)")
+            return EXIT_OK
+        for row in rows:
+            print(f"meta_log #{row['id']} [{row['timestamp']}] {row['actor']} — {row['reason']}")
+            if args.diff:
+                lines = difflib.unified_diff(
+                    row["before"].splitlines(), row["after"].splitlines(), lineterm=""
+                )
+                for line in list(lines)[2:]:
+                    print(f"    {line}")
+        return EXIT_OK
+    before = read_profile_text(path)
+    if args.profile_cmd == "add-seat":
+        after = add_seat(before, args.seat, args.lane)
+        reason = args.reason or f"register seat {args.seat}"
+    else:  # set
+        try:
+            after = sys.stdin.read() if args.file == "-" else Path(args.file).read_text("utf-8")
+        except OSError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        reason = args.reason
+    ml_id = change_profile(
+        path,
+        after,
+        reason,
+        args.actor,
+        expected_sha256=profile_sha256(before),
+        db_path=_db(args),
+    )
+    print(f"profile changed: {path} (meta_log #{ml_id})")
+    return EXIT_OK
+
+
 def cmd_info(args) -> int:
     info = query.node_info(db_path=_db(args), profile=_profile(args))
     for key, value in info.items():
@@ -392,10 +466,14 @@ def cmd_mcp(args) -> int:
         )
     else:
         db_path = _db(args)
+        profile_path = resolve_profile_path(getattr(args, "profile", None))
         print(f"serving node {db_path} ({auth}) on {args.host}:{args.port}")
+        # A found profile is WATCHED, not loaded once: `boonyard profile add-seat` (or
+        # the hosted editor) applies from the next call, with no restart (boonyard #169).
         serve(
             db_path=db_path,
-            profile=_profile(args),
+            profile=None if profile_path is not None else _profile(args),
+            profile_path=profile_path,
             host=args.host,
             port=args.port,
             api_key=key,
@@ -652,6 +730,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", required=True)
     p.add_argument("--actor", required=True)
     p.set_defaults(func=cmd_retag)
+
+    p = sub.add_parser("profile", help="the node's boonyard.toml: show, history, add-seat, set")
+    ps = p.add_subparsers(dest="profile_cmd", required=True)
+    ps.add_parser("show", help="seats, entry types, tag namespaces")
+    ph = ps.add_parser("history", help="audited profile changes, newest first")
+    ph.add_argument("n", nargs="?", type=int, default=20)
+    ph.add_argument("--diff", action="store_true", help="print what each change did")
+    pa = ps.add_parser("add-seat", help="register one seat under [agents] (audited)")
+    pa.add_argument("seat")
+    pa.add_argument("lane", help="one line: what this seat does here")
+    pa.add_argument("--actor", required=True)
+    pa.add_argument("--reason", help="default: 'register seat <seat>'")
+    pt = ps.add_parser("set", help="replace the whole file (audited)")
+    pt.add_argument("file", help="the new boonyard.toml, or - for stdin")
+    pt.add_argument("--actor", required=True)
+    pt.add_argument("--reason", required=True)
+    p.set_defaults(func=cmd_profile)
 
     p = sub.add_parser("backup", help="single-file online backup of the node")
     p.add_argument("path", nargs="?", help="destination (default: <db>.bak)")

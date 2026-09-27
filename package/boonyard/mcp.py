@@ -33,11 +33,13 @@ import copy
 import hmac
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from . import meter, query, views
 from .aggregator import aggregator as _aggregator_factory
 from .constants import DEFAULT_MCP_PORT
 from .log import log_entry, log_skill_revision
+from .profile import ProfileWatcher
 from .query import search_by_tag_exact
 
 _PROTOCOL_VERSION = "2024-11-05"
@@ -412,6 +414,11 @@ class MCPServer:
     Construct with exactly one of ``db_path`` (writable single node), ``nodes``
     (writable over several named nodes — ADR-0014's account door) or ``aggregator``
     (read-only over-many). ``handle(request)`` is pure and testable without HTTP.
+
+    A single node's profile is either a fixed ``profile`` or a ``profile_path``, which
+    is watched and re-read when the file changes, so a long-running server sees a seat
+    registered through ``change_profile`` on its next call. In ``nodes`` mode every
+    node's ``boonyard.toml`` is watched the same way.
     """
 
     def __init__(
@@ -421,10 +428,13 @@ class MCPServer:
         aggregator=None,
         nodes=None,
         profile=None,
+        profile_path=None,
         api_key=None,
         meter_path=None,
         tool_defs=None,
     ):
+        if profile is not None and profile_path is not None:
+            raise ValueError("MCPServer takes a profile or a profile_path, not both")
         given = [
             n
             for n, v in (("db_path", db_path), ("aggregator", aggregator), ("nodes", nodes))
@@ -448,6 +458,7 @@ class MCPServer:
             else (_aggregator_factory(nodes=self._nodes) if self._nodes is not None else None)
         )
         self._profile = profile
+        self._profile_watch = ProfileWatcher(profile_path) if profile_path is not None else None
         self._api_key = api_key
         # ⚠ EXPLICIT, NOT DERIVED (ADR-0014; order §0.2). `aggregator is not None` is
         # true in BOTH aggregator and nodes mode now, so deriving read-only from it
@@ -470,7 +481,7 @@ class MCPServer:
             # caught once already this week on the aggregate unit (boonyard #145).
             raise ValueError("MCPServer(nodes=…) requires a meter_path — no single home node")
         self._meter_path = meter_path
-        self._profiles: dict[str, object] = {}
+        self._profiles: dict[str, ProfileWatcher] = {}
         # Per-instance tool surface (ADR-0014 §3): the module-level TOOL_DEFS stays the
         # default; this server validates against ITS OWN set, never the module's.
         self._tool_defs = (
@@ -737,23 +748,20 @@ class MCPServer:
         """The profile that governs soft validation for the node being served.
 
         In ``nodes`` mode there is no single profile, so each node's own
-        ``boonyard.toml`` is loaded from beside its file and cached. Without this, a
-        write through the account door would be soft-validated by nothing while the
-        same write through that node's own door is validated by its profile — and
-        ADR-0006 promises the two doors behave identically.
+        ``boonyard.toml`` is watched from beside its file. Without this, a write
+        through the account door would be soft-validated by nothing while the same
+        write through that node's own door is validated by its profile — and ADR-0006
+        promises the two doors behave identically. Watched, not cached: a profile
+        changed while the server runs applies from the next call (boonyard #169).
         """
         if self._mode != "nodes":
-            return self._profile
+            return self._profile_watch.get() if self._profile_watch else self._profile
         if db not in self._profiles:
-            from pathlib import Path
-
-            from .profile import load_profile
-
-            try:
-                self._profiles[db] = load_profile(Path(db).parent / "boonyard.toml")
-            except Exception:  # noqa: BLE001 — a missing/broken profile must not block a write
-                self._profiles[db] = None
-        return self._profiles[db]
+            self._profiles[db] = ProfileWatcher(Path(db).parent / "boonyard.toml")
+        try:
+            return self._profiles[db].get()
+        except Exception:  # noqa: BLE001 — a missing/broken profile must not block a write
+            return None
 
     def _call_single(self, name, args: dict, *, db=None):
         """Serve one call against ONE node file.
@@ -1000,16 +1008,22 @@ def serve(
     *,
     aggregator=None,
     profile=None,
+    profile_path=None,
     api_key=None,
     meter_path=None,
     host: str = "127.0.0.1",
     port: int = DEFAULT_MCP_PORT,
 ) -> None:
-    """Run the MCP server forever on ``host:port`` (blocks). Ctrl-C to stop."""
+    """Run the MCP server forever on ``host:port`` (blocks). Ctrl-C to stop.
+
+    Pass ``profile_path`` rather than ``profile`` and the running server picks up a
+    changed ``boonyard.toml`` without a restart.
+    """
     server = MCPServer(
         db_path=db_path,
         aggregator=aggregator,
         profile=profile,
+        profile_path=profile_path,
         api_key=api_key,
         meter_path=meter_path,
     )

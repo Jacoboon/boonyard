@@ -9,10 +9,11 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-from boonyard import init_db, log_entry, upcoming_dates
+from boonyard import change_profile, init_db, load_profile, log_entry, upcoming_dates
 from boonyard import meter as boonyard_meter
 from boonyard.aggregator import Aggregator
 from boonyard.mcp import MCPServer, make_httpd
+from boonyard.profile_change import add_seat, read_profile_text
 
 # Pinned so the tool and the Python call are compared against the same day.
 PINNED = "2026-08-24"
@@ -798,6 +799,65 @@ class MeterAggregatorTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(node, "a")
+
+
+class ProfileReloadTests(unittest.TestCase):
+    """A running door sees a changed boonyard.toml on its NEXT call (boonyard #169).
+
+    Before 3.7.0 ``boonyard mcp`` loaded the profile once at start, so a seat registered
+    from the dashboard stayed unknown to the six legacy nn-* doors until a restart.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.db = str(root / "journal.db")
+        init_db(self.db, node_name="n-1")
+        self.toml = root / "boonyard.toml"
+        self.toml.write_text('[agents]\ncode = "builds"\n', encoding="utf-8")
+        self.meter = str(root / "meter.db")
+
+    def _agents(self, server, **args):
+        payload, err = _call(server, "node_info", args)
+        self.assertIsNone(err)
+        return set(payload["profile"]["allowed_agents"])
+
+    def _register_tg_dev(self):
+        text = read_profile_text(self.toml)
+        change_profile(
+            self.toml, add_seat(text, "tg-dev", "tea"), "register", "alice", db_path=self.db
+        )
+
+    def test_a_single_node_door_picks_up_a_new_seat_without_a_restart(self):
+        server = MCPServer(db_path=self.db, profile_path=self.toml)
+        self.assertEqual(self._agents(server), {"code"})
+        self._register_tg_dev()
+        self.assertEqual(self._agents(server), {"code", "tg-dev"})
+
+    def test_the_account_door_picks_it_up_too(self):
+        server = MCPServer(nodes={"n-1": self.db}, meter_path=self.meter)
+        self.assertEqual(self._agents(server, node="n-1"), {"code"})
+        self._register_tg_dev()
+        self.assertEqual(self._agents(server, node="n-1"), {"code", "tg-dev"})
+
+    def test_a_fixed_profile_and_a_watched_one_are_not_both_accepted(self):
+        with self.assertRaises(ValueError):
+            MCPServer(db_path=self.db, profile=load_profile(self.toml), profile_path=self.toml)
+
+    def test_the_cli_serves_a_watched_profile(self):
+        """The wiring, not just the class: `boonyard mcp` must hand serve() the PATH."""
+        import contextlib
+        import io
+        from unittest import mock
+
+        from boonyard.cli import main
+
+        with mock.patch("boonyard.mcp.serve") as served, contextlib.redirect_stdout(io.StringIO()):
+            main(["--db", self.db, "--profile", str(self.toml), "mcp"])
+        kwargs = served.call_args.kwargs
+        self.assertEqual(Path(kwargs["profile_path"]), self.toml)
+        self.assertIsNone(kwargs["profile"])
 
 
 if __name__ == "__main__":

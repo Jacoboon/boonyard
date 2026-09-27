@@ -134,6 +134,42 @@ def load_profile(path: str | Path | None) -> Profile:
     return profile_from_dict(data)
 
 
+class ProfileWatcher:
+    """A profile that is re-read whenever its file changes, for long-running servers.
+
+    ``boonyard mcp`` used to load the profile once at start, so a seat registered
+    through ``change_profile`` stayed unknown to that door until someone restarted it
+    (boonyard #169). ``get()`` stats the file on every call — one syscall — and
+    reloads when its mtime, size or inode moved (``change_profile`` swaps in a new
+    file, so the inode alone catches two edits inside one mtime tick). A missing or
+    broken file yields the defaults, exactly as :func:`load_profile` does.
+
+    Example:
+        watch = ProfileWatcher("node/boonyard.toml")
+        watch.get().allowed_agents  # re-read only if the file changed since last call
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._signature: tuple[int, int, int] | None | bool = False  # False: never read
+        self._profile: Profile = default_profile()
+
+    def _stat(self) -> tuple[int, int, int] | None:
+        try:
+            st = self.path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+    def get(self) -> Profile:
+        """The current profile, re-read if the file changed since the last call."""
+        signature = self._stat()
+        if signature != self._signature:
+            self._profile = load_profile(self.path)
+            self._signature = signature
+        return self._profile
+
+
 # --------------------------------------------------------------------------
 # Config precedence (arch 04 §Configuration)
 # --------------------------------------------------------------------------

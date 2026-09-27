@@ -7,6 +7,36 @@ Versioning follows [ADR-0002 / architecture 04](docs/architecture/04_distributio
 major version is the schema version.** A package on `3.x` reads and writes v3 nodes. A major
 bump means a schema rollover, never a marketing decision.
 
+## [3.7.0] — 2026-09-27
+
+The two follow-ups #169 named: the profile write gets a CLI, and a running server stops
+holding a stale profile. Professor's word: "proceed with your follow ups".
+
+### Added
+- **`boonyard profile show | history [--diff] | add-seat | set`**, the self-hoster's door
+  to 3.6.0's audited write. `add-seat <seat> "<lane>" --actor <who>` registers one seat;
+  `set <file|-> --actor --reason` replaces the file; both land as one `profile_change` row.
+  The file written is the one **beside the node's `journal.db`** (or `--profile`), never
+  the cwd search the read commands use: the audit lands in that node's `meta_log`, so the
+  file it describes must be that node's own. A stray `node/boonyard.toml` under your
+  working directory would otherwise edit one node and record it in another's history.
+  This repo has exactly such a stray, which is how the case was found.
+- `ProfileWatcher` (`boonyard.profile`): a profile re-read when its file's mtime, size
+  or inode changes. That is one `stat` per call.
+
+### Changed
+- **A running `boonyard mcp` picks up a changed profile on its next call.** It used to
+  load `boonyard.toml` once at start, so a seat registered from the dashboard or the CLI
+  stayed unknown to a long-running door until a restart. `MCPServer` and `serve()` take
+  `profile_path=` (watched) as the alternative to `profile=` (fixed); passing both is
+  refused. In `nodes` mode every node's profile is watched the same way, not cached.
+
+### Tests
+402 (was 392). Each fix was proven red with the old behaviour put back: a load-once
+watcher fails 3 tests, a CLI that hands `serve()` a loaded profile fails 1, and a
+cwd-resolved write target fails 1. The drift guard now also pins the CLI command count
+("24 CLI commands" was hand-kept and went stale the moment `profile` landed).
+
 ## [3.6.0] — 2026-09-26
 
 A node's profile can be changed as an audited operation, and the hosted dashboard now
