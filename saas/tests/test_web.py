@@ -1,6 +1,7 @@
 """The web app, served: signup → verify → dashboard → node → key → an MCP call through the
 router with that key, in one test — plus every refusal the forms must make."""
 
+import contextlib
 import io
 import json
 import re
@@ -9,7 +10,7 @@ import urllib.request
 import zipfile
 
 from boonyardnn.accounts import Accounts
-from boonyardnn.web import COOKIE, PREFIX, Request, WebApp
+from boonyardnn.web import COOKIE, FORM_MIN_SECONDS, HONEYPOT, PREFIX, Request, WebApp
 
 from .support import ServedRouter, ServedWeb, TmpRoot, payload_of, rpc, tool_call
 
@@ -28,7 +29,7 @@ class WebTestCase(unittest.TestCase):
         self.addCleanup(self.web.__exit__, None, None, None)
 
     def signup(self, email="alice@example.test", slug="alice", password=""):
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": email, "slug": slug, "password": password}
         )
         self.assertEqual(status, 200, body)
@@ -36,7 +37,7 @@ class WebTestCase(unittest.TestCase):
         return self.web.last_link()
 
     def verify(self, link):
-        status, headers, _b = self.web.get(link[link.index(PREFIX) + len(PREFIX) :])
+        status, headers, _b = self.web.press(link)
         self.assertEqual(status, 303)
         self.assertIn(COOKIE, self.web.cookies)
         return headers
@@ -119,7 +120,7 @@ class EndToEndTests(WebTestCase):
         self.assertNotIn(COOKIE, self.web.cookies)
         status, _h, _b = self.web.get("/")
         self.assertEqual(status, 303)  # to /login
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/login", {"email": "alice@example.test", "action": "link", "password": ""}
         )
         self.assertEqual(status, 200)
@@ -159,7 +160,7 @@ class EndToEndTests(WebTestCase):
     def test_existing_address_signup_mails_a_signin_link_and_says_the_same_thing(self):
         self.signed_in_user()
         self.web.cookies.clear()
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "alice@example.test", "slug": "other", "password": ""}
         )
         self.assertEqual(status, 200)
@@ -190,25 +191,34 @@ class RefusalTests(WebTestCase):
         self.assertIn(b"not valid", body)
         status, _h, body = self.web.get("/login/link?t=nope")
         self.assertEqual(status, 400)
+        status, _h, body = self.web.post("/verify", {"t": "nope"})
+        self.assertEqual(status, 400)
+        status, _h, body = self.web.post("/login/link", {"t": "nope"})
+        self.assertEqual(status, 400)
         link = self.signup()
         self.verify(link)
-        status, _h, body = self.web.get(link[link.index(PREFIX) + len(PREFIX) :])
+        path = link[link.index(PREFIX) + len(PREFIX) :]
+        status, _h, body = self.web.get(path)  # opening it again says so before any press
+        self.assertEqual(status, 400)
+        self.assertIn(b"already been used", body)
+        token = path.split("t=", 1)[1]
+        status, _h, body = self.web.post("/verify", {"t": token})
         self.assertEqual(status, 400)
         self.assertIn(b"already been used", body)
 
     def test_signup_form_errors(self):
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "not-an-address", "slug": "alice", "password": ""}
         )
         self.assertEqual(status, 400)
         self.assertIn(b"email address", body)
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "a@example.test", "slug": "admin", "password": ""}
         )
         self.assertEqual(status, 400)
         self.assertIn(b"reserved", body)
         self._root.provision("taken", "n1")  # a registry user the accounts table never saw
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "a@example.test", "slug": "taken", "password": ""}
         )
         self.assertEqual(status, 400)
@@ -250,7 +260,7 @@ class RefusalTests(WebTestCase):
     def test_mail_limit_surfaces_as_429(self):
         for _ in range(5):
             self.signup(slug="alice")
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "alice@example.test", "slug": "alice", "password": ""}
         )
         self.assertEqual(status, 429)
@@ -264,7 +274,7 @@ class RefusalTests(WebTestCase):
                 raise MailError("down")
 
         self.web.app.mailer = Broken()
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "a@example.test", "slug": "alice", "password": ""}
         )
         self.assertEqual(status, 503)
@@ -445,7 +455,7 @@ class MailOutageTests(WebTestCase):
         self.web.app.mailer.send = failing
         try:
             for attempt in range(5):
-                status, _h, body = self.web.post(
+                status, _h, body = self.web.submit(
                     "/signup", {"email": "alice@example.test", "slug": f"alice{attempt}"}
                 )
                 self.assertEqual(status, 503, f"attempt {attempt}: {body[:200]}")
@@ -455,7 +465,7 @@ class MailOutageTests(WebTestCase):
             self.web.app.mailer.send = good
 
         # the sixth attempt, with the provider back, must still be allowed through
-        status, _h, body = self.web.post(
+        status, _h, body = self.web.submit(
             "/signup", {"email": "alice@example.test", "slug": "alice"}
         )
         self.assertEqual(status, 200, "the outage spent the user's quota")
@@ -464,10 +474,164 @@ class MailOutageTests(WebTestCase):
     def test_the_limit_still_bites_when_the_mail_actually_went(self):
         """The slot is only returned on failure — a real limit is still a limit."""
         for attempt in range(5):
-            status, _h, _b = self.web.post(
+            status, _h, _b = self.web.submit(
                 "/signup", {"email": "bob@example.test", "slug": f"bob{attempt}"}
             )
             self.assertEqual(status, 200)
-        status, _h, body = self.web.post("/signup", {"email": "bob@example.test", "slug": "bobx"})
+        status, _h, body = self.web.submit("/signup", {"email": "bob@example.test", "slug": "bobx"})
         self.assertEqual(status, 429)
         self.assertIn(b"Slow down", body)
+
+
+_FT_RE = re.compile(rb'name="ft" value="([^"]+)"')
+
+
+class SignupBotTests(WebTestCase):
+    """The signup bot of 2026-10-07 (umbrella #518): 150 confirmation mails to strangers,
+    and seven founder seats taken by mail scanners opening the links."""
+
+    seats = 20
+
+    def stranger(self, n=0):
+        return {"email": f"stranger{n}@example.test", "slug": f"stranger{n}", "password": ""}
+
+    def assert_nothing_sent(self):
+        self.assertEqual(self.web.mailer.sent, [])
+        self.assertEqual(self.acc.list_accounts(), [])
+
+    # -- the form gate ---------------------------------------------------------
+    def test_the_pace_check_is_on_by_default(self):
+        self.assertEqual(FORM_MIN_SECONDS, 3)
+        app = WebApp(self.reg, self.acc, None, web_base="http://x", mcp_base="http://y")
+        self.assertEqual(app.form_min_seconds, FORM_MIN_SECONDS)
+
+    def test_a_post_that_never_loaded_the_form_sends_nothing(self):
+        status, _h, body = self.web.post("/signup", self.stranger())
+        self.assertEqual(status, 400)
+        self.assertIn(b"once more", body)
+        self.assertIn(b'value="stranger0@example.test"', body)  # a person loses nothing
+        self.assertIsNotNone(_FT_RE.search(body))  # and gets a fresh stamp to press again
+        self.assert_nothing_sent()
+
+    def test_the_field_no_person_can_see_sends_nothing(self):
+        status, _h, _b = self.web.submit("/signup", {**self.stranger(), HONEYPOT: "http://x"})
+        self.assertEqual(status, 400)
+        self.assert_nothing_sent()
+
+    def test_a_forged_or_borrowed_stamp_sends_nothing(self):
+        status, _h, _b = self.web.post("/signup", {**self.stranger(), "ft": "1.deadbeef"})
+        self.assertEqual(status, 400)
+        _s, _h, page = self.web.get("/login")  # a real stamp, minted for another form
+        login_ft = _FT_RE.search(page).group(1).decode()
+        status, _h, _b = self.web.post("/signup", {**self.stranger(), "ft": login_ft})
+        self.assertEqual(status, 400)
+        self.assert_nothing_sent()
+
+    def test_too_fast_and_too_old_send_nothing_and_a_person_pace_does(self):
+        now = [1_000_000.0]
+        self.web.app._clock = lambda: now[0]
+        self.web.app.form_min_seconds = FORM_MIN_SECONDS
+        _s, _h, page = self.web.get("/signup")
+        ft = _FT_RE.search(page).group(1).decode()
+        now[0] += 1  # a script posts the instant it has the page
+        status, _h, _b = self.web.post("/signup", {**self.stranger(), "ft": ft})
+        self.assertEqual(status, 400)
+        now[0] += 2 * 3600  # a tab left open all afternoon
+        status, _h, _b = self.web.post("/signup", {**self.stranger(), "ft": ft})
+        self.assertEqual(status, 400)
+        self.assert_nothing_sent()
+        _s, _h, page = self.web.get("/signup")
+        ft = _FT_RE.search(page).group(1).decode()
+        now[0] += 20  # a person reads, types, presses
+        status, _h, body = self.web.post("/signup", {**self.stranger(), "ft": ft})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(self.web.mailer.sent), 1)
+
+    def test_a_refusal_is_journaled_by_reason_never_by_address(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.web.post("/signup", self.stranger())
+        self.assertIn("signup gate refused: missing", err.getvalue())
+        self.assertNotIn("stranger0", err.getvalue())
+
+    def test_the_sign_in_link_button_is_gated_and_the_password_is_not(self):
+        self.signed_in_user(password="a long password")
+        self.web.cookies.clear()
+        sent = len(self.web.mailer.sent)
+        status, _h, _b = self.web.post(
+            "/login", {"email": "alice@example.test", "action": "link", "password": ""}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(len(self.web.mailer.sent), sent)
+        status, _h, _b = self.web.post(
+            "/login",
+            {"email": "alice@example.test", "action": "password", "password": "a long password"},
+        )
+        self.assertEqual(status, 303)
+
+    # -- the daily cap ---------------------------------------------------------
+    def test_the_daily_cap_pauses_the_form_for_everyone(self):
+        self.acc.signup_daily_cap = 2
+        self.signed_in_user()  # alice spends one of the two
+        self.web.cookies.clear()
+        self.assertEqual(self.web.submit("/signup", self.stranger(1))[0], 200)
+        sent = len(self.web.mailer.sent)
+        for form in (self.stranger(2), {"email": "alice@example.test", "slug": "alice"}):
+            status, headers, body = self.web.submit("/signup", form)
+            self.assertEqual(status, 503)
+            self.assertIn(b"paused", body)
+            self.assertIn("Retry-After", headers)
+        self.assertEqual(len(self.web.mailer.sent), sent)
+
+    def test_a_send_that_failed_does_not_spend_the_cap(self):
+        self.acc.signup_daily_cap = 1
+
+        class Broken:
+            def send(self, *a):
+                from boonyardnn.mailer import MailError
+
+                raise MailError("down")
+
+        good, self.web.app.mailer = self.web.app.mailer, Broken()
+        self.assertEqual(self.web.submit("/signup", self.stranger())[0], 503)
+        self.web.app.mailer = good
+        self.assertEqual(self.web.submit("/signup", self.stranger())[0], 200)
+
+    # -- opening a link spends nothing -------------------------------------------
+    def test_a_mail_scanner_opening_the_link_takes_no_seat(self):
+        link = self.signup()
+        path = link[link.index(PREFIX) + len(PREFIX) :]
+        for _ in range(3):  # Safe Links, a gateway, a preview pane
+            status, headers, body = self.web.get(path)
+            self.assertEqual(status, 200)
+            self.assertIn(b"alice", body)
+            self.assertIn(b"Confirm my account", body)
+            self.assertEqual(headers["Cache-Control"], "no-store")
+        req = urllib.request.Request(self.web.url(path), method="HEAD")
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+        self.assertNotIn(COOKIE, self.web.cookies)
+        self.assertIsNone(self.acc.get_by_slug("alice").verified_at)
+        self.assertEqual(self.acc.founders()["taken"], 0)
+        self.assertIsNone(self.reg.get_user("alice"))  # no workspace either
+        self.verify(link)  # the person presses the button
+        self.assertEqual(self.acc.get_by_slug("alice").founder_no, 1)
+
+    def test_a_scanner_opening_a_sign_in_link_does_not_burn_it(self):
+        csrf = self.signed_in_user()
+        self.web.post("/logout", {"csrf": csrf})
+        self.web.submit("/login", {"email": "alice@example.test", "action": "link"})
+        link = self.web.last_link()
+        path = link[link.index(PREFIX) + len(PREFIX) :]
+        status, _h, body = self.web.get(path)  # the scanner
+        self.assertEqual(status, 200)
+        self.assertIn(b"Sign me in", body)
+        self.assertNotIn(COOKIE, self.web.cookies)
+        self.verify(link)  # the person, after the scanner: it still works
+
+    def test_the_button_target_needs_the_token_in_the_body(self):
+        link = self.signup()
+        token = link.split("t=", 1)[1]
+        status, _h, _b = self.web.post(f"/verify?t={token}", {})  # a token in the URL is not enough
+        self.assertEqual(status, 400)
+        self.assertIsNone(self.acc.get_by_slug("alice").verified_at)

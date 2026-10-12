@@ -44,6 +44,12 @@ MAIL_LIMIT = 5  # per address per window (boonyard #111)
 MAIL_WINDOW = timedelta(hours=1)
 IP_LIMIT = 40  # signup/login attempts per client address per window
 IP_WINDOW = timedelta(hours=1)
+# Verification mails per rolling day, ALL addresses together (2026-10-12, umbrella #518):
+# a bot drove the form from many IPs, one stranger's address at a time, so neither
+# per-address nor per-IP limits ever tripped. This ceiling is what a bot can still cost
+# strangers' inboxes on its best day. Counted from ``token`` rows, so nothing new is kept.
+SIGNUP_DAILY_CAP = 10
+SIGNUP_CAP_WINDOW = timedelta(hours=24)
 PASSWORD_MIN = 10
 PASSWORD_MAX = 256
 _PRIVATE_FILE = 0o600
@@ -101,6 +107,10 @@ class AccountError(ValueError):
 
 class TokenError(AccountError):
     """A verification or sign-in token that is unknown, used, expired or the wrong kind."""
+
+
+class SignupCapError(AccountError):
+    """Today's verification mails are spent (``SIGNUP_DAILY_CAP``); try again tomorrow."""
 
 
 @dataclass(frozen=True)
@@ -209,10 +219,12 @@ class Accounts:
         *,
         clock: Callable[[], datetime] | None = None,
         founder_seats: int = DEFAULT_FOUNDER_SEATS,
+        signup_daily_cap: int = SIGNUP_DAILY_CAP,
     ):
         self.root = Path(root)
         self.path = self.root / "system" / "users.db"
         self.founder_seats = founder_seats
+        self.signup_daily_cap = signup_daily_cap
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock = threading.RLock()
         self._init()
@@ -314,8 +326,8 @@ class Accounts:
         )
         return raw
 
-    def _consume(self, conn: sqlite3.Connection, raw: str, kind: str) -> str:
-        """Mark a token used and return its account id; :class:`TokenError` otherwise."""
+    def _live_token(self, conn: sqlite3.Connection, raw: str, kind: str) -> sqlite3.Row:
+        """The token's row if it is known, the right kind, unused and unexpired."""
         if not raw or len(raw) > 128:
             raise TokenError("that link is not valid")
         row = conn.execute("SELECT * FROM token WHERE token_hash = ?", (_sha256(raw),)).fetchone()
@@ -323,11 +335,54 @@ class Accounts:
             raise TokenError("that link is not valid")
         if row["used_at"] is not None:
             raise TokenError("that link has already been used")
-        now = _iso(self.now())
-        if row["expires_at"] <= now:
+        if row["expires_at"] <= _iso(self.now()):
             raise TokenError("that link has expired — request a new one")
-        conn.execute("UPDATE token SET used_at = ? WHERE token_hash = ?", (now, row["token_hash"]))
+        return row
+
+    def _consume(self, conn: sqlite3.Connection, raw: str, kind: str) -> str:
+        """Mark a token used and return its account id; :class:`TokenError` otherwise."""
+        row = self._live_token(conn, raw, kind)
+        conn.execute(
+            "UPDATE token SET used_at = ? WHERE token_hash = ?",
+            (_iso(self.now()), row["token_hash"]),
+        )
         return row["account_id"]
+
+    def discard_token(self, raw_token: str) -> None:
+        """Forget an unused token whose mail never went out.
+
+        Its link reached nobody, so it should not work; and an unsent verification must
+        not count against the day's signup cap, or a provider outage (or one address's
+        own rate limit) would pause signups for everyone.
+
+        Example:
+            acc.discard_token(token)  # the send failed
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "DELETE FROM token WHERE token_hash = ? AND used_at IS NULL",
+                (_sha256(raw_token),),
+            )
+
+    def peek(self, raw_token: str, kind: str) -> Account:
+        """The account a live token belongs to, WITHOUT using the token up.
+
+        Opening a link only looks; pressing the button on the page it shows is what
+        spends it. Mail scanners open every link in a message, and when opening was
+        enough they confirmed strangers' addresses and took founder seats with them
+        (2026-10-12, umbrella #518). Raises :class:`TokenError` exactly as consuming would.
+
+        Example:
+            acc.peek(token, "verify").slug  # -> "alice"; the token still works
+        """
+        with self._connect() as conn:
+            row = self._live_token(conn, raw_token, kind)
+            account = self._one(
+                conn, "SELECT * FROM account WHERE account_id = ?", (row["account_id"],)
+            )
+        if account is None:
+            raise TokenError("that link is not valid")
+        return account
 
     # -- signup ---------------------------------------------------------------
     def begin_signup(
@@ -348,6 +403,9 @@ class Accounts:
         ``slug_available`` is consulted for a NEW slug (the web layer passes the
         registry's view, so an account can never claim a directory that exists).
 
+        Raises :class:`SignupCapError` for every address once ``signup_daily_cap``
+        verification tokens were issued in the last 24 hours.
+
         Example:
             account, kind, token = acc.begin_signup("jacob@example.test", "jacoboon")
         """
@@ -355,6 +413,15 @@ class Accounts:
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
+                # First, and for every address: refusing only NEW ones would tell a
+                # stranger which addresses already have accounts.
+                since = _iso(self.now() - SIGNUP_CAP_WINDOW)
+                issued = conn.execute(
+                    "SELECT COUNT(*) FROM token WHERE kind = 'verify' AND created_at > ?",
+                    (since,),
+                ).fetchone()[0]
+                if issued >= self.signup_daily_cap:
+                    raise SignupCapError("new signups are paused until tomorrow")
                 existing = self._one(conn, "SELECT * FROM account WHERE email = ?", (email,))
                 if existing is not None and existing.verified:
                     raw = self._issue(conn, existing.account_id, "login", LOGIN_TTL)

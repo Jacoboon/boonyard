@@ -8,8 +8,8 @@ escaped on the way out; every state-changing POST carries the session's CSRF tok
 
 Routes (all under ``/app``):
 
-    GET  /signup              POST /signup            GET /verify?t=…
-    GET  /login               POST /login             GET /login/link?t=…
+    GET  /signup              POST /signup            GET /verify?t=…      POST /verify
+    GET  /login               POST /login             GET /login/link?t=…  POST /login/link
     POST /logout              GET  /                  (the dashboard)
     POST /nodes               POST /nodes/{slug}/keys POST /keys/{id}/revoke
     GET  /nodes/{slug}/export POST /password
@@ -18,21 +18,37 @@ Routes (all under ``/app``):
 Never logs a URL: verification and sign-in links carry their token in the query
 string, so ``log_message`` is a no-op here as in the router, and the nginx location
 in front of this port runs with ``access_log off``.
+
+A mailed link only LOOKS when opened; the button on the page it shows is what spends
+it (POST). Every form that sends mail to an address typed into it carries a signed
+form-time stamp and a honeypot field (the form gate). Both answer the signup bot of
+2026-10-07 (umbrella #518): it mailed 150 strangers from this form, and mail scanners
+opening those links confirmed seven of them and took seven founder seats.
 """
 
+import hashlib
+import hmac
 import html
 import http.cookies
 import json
+import secrets
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import NamedTuple
 from urllib.parse import parse_qs, quote, urlencode
 
 from . import __version__, provisioner
-from .accounts import PASSWORD_MIN, Account, AccountError, Accounts, TokenError
+from .accounts import (
+    PASSWORD_MIN,
+    Account,
+    AccountError,
+    Accounts,
+    SignupCapError,
+    TokenError,
+)
 from .legal import PRIVACY_HTML, TERMS_HTML
 from .mailer import MailError, login_mail, verify_mail
 from .registry import Registry, RegistryError, SlugError, validate_slug
@@ -45,6 +61,9 @@ MAX_BODY = 64 * 1024
 MAX_LABEL = 64
 FREE_NODE_CAP = 3  # ADR-0007 / arch 07: Free = 3 nodes. Founders are Pro for a year: no cap.
 SESSION_MAX_AGE = 30 * 24 * 3600
+FORM_MIN_SECONDS = 3  # a person reads and types; a script posts the instant it has the page
+FORM_MAX_AGE = 2 * 3600
+HONEYPOT = "website"  # hidden from people and from tab order; scripts fill every field
 
 Response = tuple[int, list[tuple[str, str]], bytes]
 
@@ -145,6 +164,7 @@ th,td{text-align:left;padding:.35rem .4rem;border-bottom:1px solid var(--border)
  vertical-align:top}
 th{color:var(--muted);font-weight:normal}
 .inline{display:inline}
+.hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
 .tag{font-family:var(--mono);font-size:.75rem;color:var(--accent);
  border:1px solid var(--accent-dim);border-radius:4px;padding:.05em .4em}
 footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--border);
@@ -187,6 +207,8 @@ class WebApp:
         web_base: str,
         mcp_base: str,
         secure_cookies: bool | None = None,
+        form_min_seconds: float = FORM_MIN_SECONDS,
+        clock: Callable[[], float] = time.time,
     ):
         self.registry = registry
         self.accounts = accounts
@@ -196,6 +218,10 @@ class WebApp:
         self.secure_cookies = (
             self.web_base.startswith("https://") if secure_cookies is None else secure_cookies
         )
+        self.form_min_seconds = form_min_seconds
+        self._clock = clock
+        # Per process: a restart invalidates open forms, which costs a person one more press.
+        self._form_key = secrets.token_bytes(32)
         self._started = time.monotonic()
 
     # -- dispatch -------------------------------------------------------------
@@ -208,13 +234,13 @@ class WebApp:
         head = parts[0]
         if head == "signup" and len(parts) == 1:
             return self.signup_form(req) if get else self.signup(req)
-        if head == "verify" and len(parts) == 1 and get:
-            return self.verify(req)
+        if head == "verify" and len(parts) == 1:
+            return self.verify_form(req) if get else self.verify(req)
         if head == "login":
             if len(parts) == 1:
                 return self.login_form(req) if get else self.login(req)
-            if len(parts) == 2 and parts[1] == "link" and get:
-                return self.login_link(req)
+            if len(parts) == 2 and parts[1] == "link":
+                return self.login_link_form(req) if get else self.login_link(req)
         if head == "logout" and len(parts) == 1:
             return self.logout(req) if post else self._method_not_allowed("POST")
         if head == "nodes":
@@ -328,6 +354,52 @@ class WebApp:
             )
         return _Session(*found)
 
+    # -- the form gate ------------------------------------------------------------
+    def _form_sig(self, purpose: str, issued: int) -> str:
+        msg = f"{purpose}:{issued}".encode()
+        return hmac.new(self._form_key, msg, hashlib.sha256).hexdigest()[:32]
+
+    def _gate_fields(self, purpose: str) -> str:
+        """The hidden form-time stamp and the honeypot, for a form that sends mail."""
+        issued = int(self._clock())
+        return (
+            f'<input type="hidden" name="ft" value="{issued}.{self._form_sig(purpose, issued)}">'
+            f'<div class="hp" aria-hidden="true"><label for="{HONEYPOT}">leave this empty'
+            f'</label><input id="{HONEYPOT}" name="{HONEYPOT}" type="text" tabindex="-1" '
+            'autocomplete="off"></div>'
+        )
+
+    def _gate(self, req: Request, purpose: str) -> str | None:
+        """None if this POST came from our form, at a person's pace; else why not.
+
+        The reason goes to the journal (never the address or the IP); the person sees
+        the form again with what they typed, so a false positive costs one more press.
+        A script that posts without loading the form, posts the instant it loads it, or
+        fills the field no person can see, never reaches the mailer.
+
+        Example:
+            app._gate(req, "signup")  # -> None, or "honeypot" / "missing" / "too-fast" …
+        """
+        form = req.form
+        if form.get(HONEYPOT, ""):
+            return "honeypot"
+        stamp, _, sig = form.get("ft", "").partition(".")
+        if not stamp.isdigit() or not sig:
+            return "missing"
+        issued = int(stamp)
+        if not hmac.compare_digest(sig, self._form_sig(purpose, issued)):
+            return "forged"
+        age = self._clock() - issued
+        if age > FORM_MAX_AGE:
+            return "expired"
+        if age < self.form_min_seconds:
+            return "too-fast"
+        return None
+
+    @staticmethod
+    def _gate_refused(purpose: str, reason: str) -> None:
+        print(f"boonyardnn: {purpose} gate refused: {reason}", file=sys.stderr, flush=True)
+
     def _rate(self, req: Request, kind: str) -> Response | None:
         if self.accounts.ip_allowed(req.ip, kind):
             return None
@@ -401,6 +473,7 @@ class WebApp:
             '<input id="password" name="password" type="password" '
             'autocomplete="new-password" '
             f"minlength=\"{PASSWORD_MIN}\" maxlength=\"256\">"
+            f"{self._gate_fields('signup')}"
             f'<p class="muted">By creating an account you agree to the '
             f'<a href="{PREFIX}/terms">Terms</a> and the '
             f'<a href="{PREFIX}/privacy">Privacy Policy</a>.</p>'
@@ -418,9 +491,30 @@ class WebApp:
         form = req.form
         email, slug = form.get("email", ""), form.get("slug", "").strip()
         password = form.get("password", "") or None
+        refused = self._gate(req, "signup")
+        if refused:
+            self._gate_refused("signup", refused)
+            return self.signup_form(
+                req,
+                error="Please press Create account once more.",
+                values={"email": email, "slug": slug},
+                status=400,
+            )
         try:
             account, kind, token = self.accounts.begin_signup(
                 email, slug, password, slug_available=lambda s: self.registry.get_user(s) is None
+            )
+        except SignupCapError:
+            print("boonyardnn: signup daily cap reached", file=sys.stderr, flush=True)
+            return self._page(
+                "Signups paused for today",
+                "<p>We have sent today's share of confirmation emails. The limit keeps "
+                "this form from being used to fill strangers' inboxes.</p>"
+                "<p>Try again tomorrow, or write to "
+                '<a href="mailto:hello@boonyard.com">hello@boonyard.com</a> and we will '
+                "let you in.</p>",
+                status=503,
+                headers=[("Retry-After", "3600")],
             )
         except (AccountError, SlugError) as exc:
             return self.signup_form(
@@ -432,6 +526,7 @@ class WebApp:
             subject, text = login_mail(self._link("/login/link", token))
         failed = self._mail(req, account.email, kind, subject, text)
         if failed:
+            self.accounts.discard_token(token)
             return failed
         return self._page(
             "Check your email",
@@ -444,17 +539,47 @@ class WebApp:
             nav="one more step",
         )
 
+    def _bad_link(self, exc: TokenError, retry: str) -> Response:
+        return self._page("Link not valid", f'<p class="err">{_esc(exc)}</p>{retry}', status=400)
+
+    def _confirm_page(self, title: str, action: str, token: str, lead: str, button: str):
+        """The page a mailed link opens: it spends nothing until the button is pressed."""
+        return self._page(
+            title,
+            f"<p>{lead}</p>"
+            f'<form method="post" action="{PREFIX}{action}" class="panel">'
+            f'<input type="hidden" name="t" value="{_esc(token)}">'
+            f'<button type="submit">{_esc(button)}</button></form>'
+            '<p class="muted">One press, so that mail scanners which open every link '
+            "cannot act for you.</p>",
+            nav="one more step",
+            private=True,
+        )
+
+    def verify_form(self, req: Request) -> Response:
+        token = req.query.get("t", "")
+        try:
+            account = self.accounts.peek(token, "verify")
+        except TokenError as exc:
+            return self._bad_link(exc, self._verify_retry)
+        return self._confirm_page(
+            "Confirm your account",
+            "/verify",
+            token,
+            f"Confirm the account <b>{_esc(account.slug)}</b> for this address.",
+            "Confirm my account",
+        )
+
+    _verify_retry = (
+        f'<p><a href="{PREFIX}/signup">Sign up again</a> or '
+        f'<a href="{PREFIX}/login">sign in</a>.</p>'
+    )
+
     def verify(self, req: Request) -> Response:
         try:
-            account = self.accounts.verify(req.query.get("t", ""))
+            account = self.accounts.verify(req.form.get("t", ""))
         except TokenError as exc:
-            return self._page(
-                "Link not valid",
-                f'<p class="err">{_esc(exc)}</p>'
-                f'<p><a href="{PREFIX}/signup">Sign up again</a> or '
-                f'<a href="{PREFIX}/login">sign in</a>.</p>',
-                status=400,
-            )
+            return self._bad_link(exc, self._verify_retry)
         if self.registry.get_user(account.slug) is None:
             try:
                 provisioner.add_user(self.registry, account.slug, account.email)
@@ -486,6 +611,7 @@ class WebApp:
             "Sign in with password</button> "
             "<button type=\"submit\" name=\"action\" value=\"link\" class=\"quiet\">"
             "Email me a sign-in link</button>"
+            f"{self._gate_fields('login')}"
             "</form>"
             f"<p class=\"muted\">New here? <a href=\"{PREFIX}/signup\">Create an account</a>.</p>"
         )
@@ -498,6 +624,13 @@ class WebApp:
         form = req.form
         email = form.get("email", "")
         if form.get("action") == "link":
+            # Only the button that sends mail is gated; a password sign-in sends none.
+            refused = self._gate(req, "login")
+            if refused:
+                self._gate_refused("login", refused)
+                return self.login_form(
+                    req, error="Please press the button once more.", email=email, status=400
+                )
             found = self.accounts.request_login(email)
             if found is not None:
                 account, token = found
@@ -524,16 +657,27 @@ class WebApp:
         raw, _csrf = self.accounts.open_session(account.account_id)
         return self._redirect(f"{PREFIX}/?m=signed-in", headers=[self._cookie(raw)])
 
+    _login_retry = f'<p><a href="{PREFIX}/login">Ask for a new one</a>.</p>'
+
+    def login_link_form(self, req: Request) -> Response:
+        token = req.query.get("t", "")
+        try:
+            account = self.accounts.peek(token, "login")
+        except TokenError as exc:
+            return self._bad_link(exc, self._login_retry)
+        return self._confirm_page(
+            "Sign in",
+            "/login/link",
+            token,
+            f"Sign in as <b>{_esc(account.slug)}</b>.",
+            "Sign me in",
+        )
+
     def login_link(self, req: Request) -> Response:
         try:
-            account = self.accounts.consume_login(req.query.get("t", ""))
+            account = self.accounts.consume_login(req.form.get("t", ""))
         except TokenError as exc:
-            return self._page(
-                "Link not valid",
-                f'<p class="err">{_esc(exc)}</p>'
-                f'<p><a href="{PREFIX}/login">Ask for a new one</a>.</p>',
-                status=400,
-            )
+            return self._bad_link(exc, self._login_retry)
         raw, _csrf = self.accounts.open_session(account.account_id)
         return self._redirect(f"{PREFIX}/?m=signed-in", headers=[self._cookie(raw)])
 

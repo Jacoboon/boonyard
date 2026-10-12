@@ -4,7 +4,9 @@ Everything that touches the substrate goes through ``boonyardnn.adapter`` —
 never ``import boonyard`` here (``test_adapter_rule`` greps for it).
 """
 
+import html
 import json
+import re
 import tempfile
 import threading
 import urllib.error
@@ -120,6 +122,7 @@ class ServedWeb:
             web_base="http://127.0.0.1:0",  # patched once the port is known
             mcp_base=mcp_base,
             secure_cookies=False,
+            form_min_seconds=0,  # the form gate's pace check has its own tests (test_web)
         )
         self.httpd = make_web_httpd(self.app, host="127.0.0.1", port=0)
         self.port = self.httpd.server_address[1]
@@ -168,6 +171,30 @@ class ServedWeb:
             headers={"Content-Type": "application/x-www-form-urlencoded", **(headers or {})},
         )
         return self._send(req)
+
+    def submit(self, path: str, form: dict, headers: dict | None = None) -> tuple[int, dict, bytes]:
+        """Load ``path`` like a browser, then post its form: its own hidden fields (the
+        form gate's stamp, a mailed link's token) with ``form`` on top.
+
+        Example:
+            web.submit("/signup", {"email": "a@example.test", "slug": "alice"})
+        """
+        status, _headers, body = self.get(path)
+        assert status == 200, (status, body[:300])
+        page = body.decode("utf-8")
+        start = page.index('<form method="post"')
+        action = re.search(r'action="([^"]+)"', page[start:]).group(1)
+        inside = page[start : page.index("</form>", start)]
+        fields = {
+            k: html.unescape(v)
+            for k, v in re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', inside)
+        }
+        fields.update(form)
+        return self.post(action[len(PREFIX) :], fields, headers)
+
+    def press(self, link: str) -> tuple[int, dict, bytes]:
+        """Open a mailed link and press the button on the page it shows."""
+        return self.submit(link[link.index(PREFIX) + len(PREFIX) :], {})
 
     def last_link(self) -> str:
         """The first http(s) URL in the most recent captured mail."""

@@ -21,7 +21,9 @@ The data root is ``--root`` or ``$BOONYARDNN_DATA_ROOT`` — never a silent defa
 because these commands create 0700 directories. ``$BOONYARDNN_PUBLIC_BASE`` is the
 router's public URL (what ``key add`` prints and what the dashboard shows);
 ``$BOONYARDNN_WEB_BASE`` is the app's (the links in mail). Mail: ``$BOONYARDNN_MAIL``
-= ``agentmail`` | ``log`` | ``none`` (see ``mailer.py``).
+= ``agentmail`` | ``log`` | ``none`` (see ``mailer.py``). ``$BOONYARDNN_SIGNUP_DAILY_CAP``
+is how many confirmation mails the signup form may send per rolling day, all addresses
+together (default 10).
 
 Exit codes mirror the package: 0 ok; 1 not found; 2 usage / validation. All
 human-facing output lives here; the library modules never print. The raw key is
@@ -35,7 +37,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, adapter, provisioner
-from .accounts import DEFAULT_FOUNDER_SEATS, AccountError, Accounts
+from .accounts import DEFAULT_FOUNDER_SEATS, SIGNUP_DAILY_CAP, AccountError, Accounts
 from .mailer import MailError, mailer_from_env
 from .registry import NotFoundError, Registry, RegistryError
 from .router import DEFAULT_HOST, DEFAULT_PORT, serve
@@ -49,6 +51,7 @@ ENV_ROOT = "BOONYARDNN_DATA_ROOT"
 ENV_PUBLIC_BASE = "BOONYARDNN_PUBLIC_BASE"
 ENV_WEB_BASE = "BOONYARDNN_WEB_BASE"
 ENV_FOUNDER_SEATS = "BOONYARDNN_FOUNDER_SEATS"
+ENV_SIGNUP_DAILY_CAP = "BOONYARDNN_SIGNUP_DAILY_CAP"
 DEFAULT_PUBLIC_BASE = "http://127.0.0.1:8800"
 DEFAULT_WEB_BASE = "http://127.0.0.1:8801"
 
@@ -66,8 +69,11 @@ def _registry(args) -> Registry:
 
 def _accounts(args) -> Accounts:
     seats = os.environ.get(ENV_FOUNDER_SEATS)
+    cap = os.environ.get(ENV_SIGNUP_DAILY_CAP)
     return Accounts(
-        _registry(args).root, founder_seats=int(seats) if seats else DEFAULT_FOUNDER_SEATS
+        _registry(args).root,
+        founder_seats=int(seats) if seats else DEFAULT_FOUNDER_SEATS,
+        signup_daily_cap=int(cap) if cap else SIGNUP_DAILY_CAP,
     )
 
 

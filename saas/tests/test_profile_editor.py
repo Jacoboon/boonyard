@@ -6,7 +6,6 @@ import unittest
 
 from boonyardnn import provisioner
 from boonyardnn.accounts import Accounts
-from boonyardnn.web import PREFIX
 
 from .support import ServedRouter, ServedWeb, TmpRoot, payload_of, tool_call
 
@@ -20,9 +19,9 @@ class ProfileEditorTests(unittest.TestCase):
         self.reg = self._root.registry
         self.web = ServedWeb(self.reg, Accounts(self._root.root, founder_seats=2)).__enter__()
         self.addCleanup(self.web.__exit__, None, None, None)
-        self.web.post("/signup", {"email": "alice@example.test", "slug": "alice", "password": ""})
+        self.web.submit("/signup", {"email": "alice@example.test", "slug": "alice", "password": ""})
         link = self.web.last_link()
-        self.web.get(link[link.index(PREFIX) + len(PREFIX) :])
+        self.web.press(link)
         self.csrf = self.web.csrf()
         self.web.post("/nodes", {"csrf": self.csrf, "slug": "n1"})
         user = self.reg.get_user("alice")

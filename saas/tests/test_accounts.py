@@ -10,9 +10,11 @@ from pathlib import Path
 from boonyardnn.accounts import (
     LOGIN_TTL,
     MAIL_LIMIT,
+    SIGNUP_DAILY_CAP,
     VERIFY_TTL,
     AccountError,
     Accounts,
+    SignupCapError,
     TokenError,
     check_password_hash,
     hash_password,
@@ -298,3 +300,71 @@ class MailSlotTests(AccountsTestCase):
             self.acc.mail_allowed("a@example.test", "verify"),
             "an outage must not spend the user's quota",
         )
+
+
+class SignupBotTests(AccountsTestCase):
+    """The answers to the signup bot of 2026-10-07 (umbrella #518) that live in the store."""
+
+    def test_the_daily_cap_is_on_by_default(self):
+        self.assertEqual(SIGNUP_DAILY_CAP, 10)
+        self.assertEqual(Accounts(self.root).signup_daily_cap, SIGNUP_DAILY_CAP)
+
+    def test_the_cap_spans_every_address_then_reopens_after_a_day(self):
+        self.acc.signup_daily_cap = 3
+        for n in range(3):
+            self.acc.begin_signup(f"stranger{n}@example.test", f"stranger{n}")
+        with self.assertRaises(SignupCapError):
+            self.acc.begin_signup("fourth@example.test", "fourth")
+        self.assertIsNone(self.acc.get_by_email("fourth@example.test"))  # nothing kept
+        self.clock.advance(timedelta(hours=24, seconds=1))
+        _account, kind, _token = self.acc.begin_signup("fourth@example.test", "fourth")
+        self.assertEqual(kind, "verify")
+
+    def test_a_paused_form_answers_a_known_address_the_same_way(self):
+        """Refusing only new addresses would tell a stranger which ones have accounts."""
+        self.signup_and_verify("a@example.test", "alice")
+        self.acc.signup_daily_cap = 1
+        with self.assertRaises(SignupCapError):
+            self.acc.begin_signup("a@example.test", "alice")
+
+    def test_login_links_do_not_count_against_the_cap(self):
+        self.acc.signup_daily_cap = 1
+        self.signup_and_verify("a@example.test", "alice")
+        for _ in range(3):
+            self.assertIsNotNone(self.acc.request_login("a@example.test"))
+
+    def test_a_discarded_token_frees_its_slot_and_stops_working(self):
+        self.acc.signup_daily_cap = 1
+        _account, _kind, token = self.acc.begin_signup("a@example.test", "alice")
+        self.acc.discard_token(token)  # its mail never went out
+        with self.assertRaises(TokenError):
+            self.acc.verify(token)
+        _account, _kind, again = self.acc.begin_signup("a@example.test", "alice")
+        self.assertEqual(self.acc.verify(again).slug, "alice")
+
+    def test_discard_never_touches_a_used_token(self):
+        _account, _kind, token = self.acc.begin_signup("a@example.test", "alice")
+        self.acc.verify(token)
+        self.acc.discard_token(token)
+        with self.assertRaisesRegex(TokenError, "already been used"):
+            self.acc.verify(token)
+
+    def test_peek_looks_without_spending(self):
+        _account, _kind, token = self.acc.begin_signup("a@example.test", "alice")
+        for _ in range(3):  # a mail scanner opening the link, again and again
+            self.assertEqual(self.acc.peek(token, "verify").slug, "alice")
+        self.assertIsNone(self.acc.get_by_email("a@example.test").verified_at)
+        self.assertEqual(self.acc.founders()["taken"], 0)
+        self.assertEqual(self.acc.verify(token).founder_no, 1)
+        with self.assertRaisesRegex(TokenError, "already been used"):
+            self.acc.peek(token, "verify")
+
+    def test_peek_refuses_what_consuming_would(self):
+        with self.assertRaises(TokenError):
+            self.acc.peek("nope", "verify")
+        _account, _kind, token = self.acc.begin_signup("a@example.test", "alice")
+        with self.assertRaises(TokenError):
+            self.acc.peek(token, "login")  # wrong kind
+        self.clock.advance(VERIFY_TTL + timedelta(seconds=1))
+        with self.assertRaisesRegex(TokenError, "expired"):
+            self.acc.peek(token, "verify")

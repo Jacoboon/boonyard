@@ -221,9 +221,9 @@ class BrowserTests(unittest.TestCase):
         self.web = ServedWeb(self.reg, self.acc).__enter__()
         self.addCleanup(self.web.__exit__, None, None, None)
         # sign up, verify, create a node
-        self.web.post("/signup", {"email": "alice@example.test", "slug": "alice", "password": ""})
+        self.web.submit("/signup", {"email": "alice@example.test", "slug": "alice", "password": ""})
         link = self.web.last_link()
-        self.web.get(link[link.index(PREFIX) + len(PREFIX) :])
+        self.web.press(link)
         self.csrf = self.web.csrf()
         self.web.post("/nodes", {"csrf": self.csrf, "slug": "n1"})
 

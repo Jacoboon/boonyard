@@ -150,7 +150,8 @@ def verify_mail(link: str, *, slug: str) -> tuple[str, str]:
     return (
         "Confirm your Boonyard account",
         f'You (or someone using this address) signed up for Boonyard as "{slug}".\n\n'
-        f"Confirm the address by opening this link within 24 hours:\n\n  {link}\n\n"
+        "To confirm the address, open this link within 24 hours and press the button "
+        f"on the page:\n\n  {link}\n\n"
         "If that wasn't you, ignore this mail and nothing happens.\n\n"
         "— Boonyard · https://boonyard.com\n",
     )
@@ -164,7 +165,8 @@ def login_mail(link: str) -> tuple[str, str]:
     """
     return (
         "Your Boonyard sign-in link",
-        f"Open this link to sign in. It works once and expires in 20 minutes:\n\n  {link}\n\n"
+        "Open this link and press the button on the page to sign in. It works once and "
+        f"expires in 20 minutes:\n\n  {link}\n\n"
         "If you didn't ask for it, ignore this mail — nobody can use it but you.\n\n"
         "— Boonyard · https://boonyard.com\n",
     )
