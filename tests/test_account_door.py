@@ -323,6 +323,15 @@ class ReadTests(NodeMapCase):
         self.assertIsNone(spanning["readme"])
         self.assertIn("aggregator endpoint", spanning["note"])
 
+    def test_index_rows_name_their_node_whether_spanning_or_named(self):
+        """3.8.0: the account door serves fields="meta" down both of its paths."""
+        spanning = _call(self.account(), "recent", limit=20, fields="meta")
+        self.assertEqual({r["source"] for r in spanning}, {"alpha-one", "beta-two"})
+        self.assertTrue(all("content" not in r for r in spanning))
+        named = _call(self.account(), "recent", limit=20, fields="meta", scope="beta-two")
+        self.assertEqual([r["source"] for r in named], ["beta-two"] * 3)
+        self.assertEqual(named[0]["first_line"], "beta-two entry 2")
+
 
 # ---------------------------------------------------------------------------
 # the meter

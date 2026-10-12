@@ -3,6 +3,7 @@
 import ast
 import datetime
 import inspect
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -29,7 +30,13 @@ from boonyard import (
     upcoming_dates,
 )
 from boonyard import query as query_module
-from boonyard.query import _coerce_today, _extract_dated_tags
+from boonyard.query import (
+    FIELDS,
+    FIRST_LINE_CHARS,
+    _coerce_today,
+    _extract_dated_tags,
+    _first_line,
+)
 
 # The pinned "today" for every dated test. Never date.today(): a test that drifts
 # with the wall clock is a test that fails at midnight for no reason.
@@ -492,6 +499,114 @@ class SearchPunctuationTests(unittest.TestCase):
         self.assertEqual(_as_literal_terms("c++"), '"c"')
         self.assertEqual(_as_literal_terms("what's next?"), '"what" "s" "next"')
         self.assertEqual(_as_literal_terms("!!!"), '""')
+
+
+# --------------------------------------------------------------------------
+# 3.8.0 — the index projection, fields="meta" (mycelium-sky #1041)
+# --------------------------------------------------------------------------
+# Per-entry sizes measured on mycelium-sky's Cypher entries, newest first (#1041).
+_CYPHER_SIZES = (7_105, 14_357, 20_139, 16_221, 13_660, 12_327, 3_383)
+_ENTRY_KEYS = {"id", "timestamp", "agent", "entry_type", "content", "related_id", "tags", "extras"}
+_INDEX_KEYS = {
+    "id",
+    "timestamp",
+    "agent",
+    "entry_type",
+    "first_line",
+    "tags",
+    "related_id",
+    "content_chars",
+}
+
+
+def _prose(n: int, i: int) -> str:
+    """Exactly ``n`` chars of hash-dense text under a stateful first line, like a run log."""
+    head = f"NIGHT {i}: 0 sends, 9/9 route hashes held\n"
+    line = f"route {i} sha256 {i * 7919:064x} held · ok\n"
+    return (head + line * (n // len(line) + 1))[:n]
+
+
+class IndexProjectionTests(unittest.TestCase):
+    """``fields="meta"``: one index row per entry, so cost follows limit, not entry length."""
+
+    def test_the_default_is_still_the_full_entry(self):
+        conn = _node()
+        _seed(conn)
+        rows = recent(conn=conn)
+        self.assertEqual(set(rows[0]), _ENTRY_KEYS)
+        self.assertEqual(rows, recent(fields="full", conn=conn))
+        self.assertEqual(FIELDS, ("full", "meta"))
+
+    def test_meta_rows_carry_the_index_and_no_content(self):
+        conn = _node()
+        text = "\n  HEADLINE\nthe body"
+        root = log_entry("code", "note", text, extras={"k": 1}, conn=conn)
+        reply = log_entry("code", "note", "a reply", related_id=root, conn=conn)
+        rows = recent(fields="meta", conn=conn)
+        self.assertEqual([r["id"] for r in rows], [reply, root])
+        for row in rows:
+            self.assertEqual(set(row), _INDEX_KEYS)  # no content, no extras
+        self.assertEqual(rows[1]["first_line"], "HEADLINE")
+        self.assertEqual(rows[1]["content_chars"], len(text))
+        self.assertEqual(rows[0]["related_id"], root)
+        self.assertIsNone(rows[1]["related_id"])
+        self.assertIsInstance(rows[0]["tags"], list)
+
+    def test_first_line_is_the_function_ghosts_uses(self):
+        """The two tools agree because there is only one derivation, not two copies."""
+        from boonyard import views
+
+        self.assertIs(views._first_line, _first_line)
+        clipped = _first_line("x" * (FIRST_LINE_CHARS + 50))
+        self.assertEqual(len(clipped), FIRST_LINE_CHARS)
+        self.assertTrue(clipped.endswith("…"))
+        self.assertEqual(_first_line("x" * FIRST_LINE_CHARS), "x" * FIRST_LINE_CHARS)
+        self.assertEqual(_first_line(""), "")
+        self.assertEqual(_first_line("  \n\n"), "")
+
+    def test_every_list_reader_takes_meta_and_returns_the_same_rows(self):
+        conn = _node()
+        root = log_entry("code", "discussion", "fox root", tags="animal", conn=conn)
+        log_entry("opus", "note", "fox reply", related_id=root, tags="animal", conn=conn)
+        readers = {
+            "recent": lambda **kw: recent(conn=conn, **kw),
+            "get_thread": lambda **kw: get_thread(root, conn=conn, **kw),
+            "search_by_tag": lambda **kw: search_by_tag("animal", conn=conn, **kw),
+            "search_by_tag_exact": lambda **kw: search_by_tag_exact("animal", conn=conn, **kw),
+            "search_text": lambda **kw: search_text("fox", conn=conn, **kw),
+        }
+        for name, read in readers.items():
+            with self.subTest(reader=name):
+                full, meta = read(), read(fields="meta")
+                self.assertEqual(len(full), 2)
+                self.assertEqual([e["id"] for e in meta], [e["id"] for e in full])
+                self.assertTrue(all(set(r) == _INDEX_KEYS for r in meta))
+
+    def test_an_unknown_fields_raises_even_on_an_empty_result(self):
+        """A typo that fell back to full would return the payload the caller meant to avoid."""
+        conn = _node()
+        with self.assertRaises(ValueError) as caught:
+            recent(fields="metadata", conn=conn)  # empty node: nothing to project
+        self.assertIn("'meta'", str(caught.exception))
+        with self.assertRaises(ValueError):
+            search_text("anything", fields="META", conn=conn)
+
+    def test_a_long_window_of_prose_entries_stays_small(self):
+        """THE #1041 CASE. Twenty entries at mycelium-sky's measured sizes are ~255,000
+        chars of JSON in full; on that node a limit=3 call (53,500) was already refused.
+        The index is a few kilobytes, because it grows with limit, not entry length."""
+        conn = _node()
+        for i in range(21):
+            log_entry("code", "note", _prose(_CYPHER_SIZES[i % 7], i), conn=conn)
+        full = json.dumps(recent(20, conn=conn))
+        rows = recent(20, fields="meta", conn=conn)
+        self.assertGreater(len(full), 250_000)
+        self.assertLess(len(json.dumps(rows)), 10_000)
+        self.assertEqual(rows[0]["first_line"], "NIGHT 20: 0 sends, 9/9 route hashes held")
+        self.assertEqual(
+            [r["content_chars"] for r in rows[:7]],
+            [_CYPHER_SIZES[i % 7] for i in range(20, 13, -1)],
+        )
 
 
 if __name__ == "__main__":

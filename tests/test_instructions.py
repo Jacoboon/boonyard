@@ -162,6 +162,14 @@ class ReadHeatHookTests(NodeCase):
         _call(self.server, "search_text", {"query": "other"})
         self.assertEqual(_hits(self.meter)[-1]["entry_id"], self.other)
 
+    def test_an_index_read_records_what_it_returned_too(self):
+        """3.8.0. ADR-0013 section 2a counts every id a list read RETURNED, and the
+        upcoming_dates rows it already counts carry only a headline. An index row is
+        the same kind of return. If index reads should stop counting, that is an
+        ADR-0013 amendment first, and this is the test to move with it."""
+        payload, _ = _call(self.server, "recent", {"limit": 2, "fields": "meta"})
+        self.assertEqual([r["entry_id"] for r in _hits(self.meter)], [e["id"] for e in payload])
+
     def test_a_write_records_nothing(self):
         _call(self.server, "log_entry", {"agent": "code", "entry_type": "note", "content": "w"})
         self.assertEqual(_hits(self.meter), [])
@@ -347,6 +355,22 @@ class ReadmeNamesOnlyServedToolsTests(unittest.TestCase):
         from boonyard.mcp import TOOL_DEFS
 
         self.assertIn("serves one node", build(TOOL_DEFS, "0.0.0"))
+
+    def test_the_index_sentence_names_exactly_the_tools_that_take_fields(self):
+        import copy
+
+        from boonyard.instructions import build
+        from boonyard.mcp import TOOL_DEFS
+
+        self.assertIn(
+            "fields='meta' on recent, get_thread, search_by_tag, search_by_tag_exact, "
+            "search_text gives",
+            build(TOOL_DEFS, "0.0.0"),
+        )
+        stripped = copy.deepcopy(TOOL_DEFS)
+        for tool in stripped:
+            tool["inputSchema"]["properties"].pop("fields", None)
+        self.assertNotIn("fields='meta'", build(stripped, "0.0.0"))
 
     def test_every_door_stays_under_the_cap(self):
         from boonyard.instructions import MAX_BYTES, build

@@ -31,8 +31,8 @@ or deleted. A correction is a new entry that points at the old one.
 
 THE READ LAW — search before you assert. search_text the nouns (full-text), \
 search_by_tag or search_by_tag_exact for a tag, recent for the newest, get_thread for a \
-root and its replies, by_id for one entry. Then cite the id you found, or say you \
-searched and found nothing.
+root and its replies, by_id for one entry. {index}Then cite the id you found, or say \
+you searched and found nothing.
 
 WRITING — log_entry(agent, entry_type, content, related_id?, tags?). tags is a \
 comma-separated string ("decision, project-x"), lowercase-hyphen, never JSON. Put \
@@ -107,6 +107,15 @@ def build(tool_defs: list[dict], version: str) -> str:
 
     heat = "ghosts lists root entries nobody threaded to or read; " if "ghosts" in names else ""
 
+    # Whichever tools declare the projection, so the sentence cannot name one that lacks it.
+    paged = [t["name"] for t in tool_defs if "fields" in t["inputSchema"].get("properties", {})]
+    index = (
+        f"Long window? fields='meta' on {', '.join(paged)} gives first lines and sizes, "
+        "not content; by_id the ones you need. "
+        if paged
+        else ""
+    )
+
     needs = sorted(t["name"] for t in tool_defs if _requires_node(t))
     nodearg = (
         'Every row names its node in "source", and this door requires node=<slug> on '
@@ -120,6 +129,7 @@ def build(tool_defs: list[dict], version: str) -> str:
         tools="\n".join(lines),
         skills=skills,
         heat=heat,
+        index=index,
         nodearg=nodearg,
         types=types,
     )

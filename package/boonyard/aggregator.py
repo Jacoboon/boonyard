@@ -33,6 +33,7 @@ from .query import (
     _coerce_today,
     _dated_entry_rows,
     _dates_envelope,
+    _project,
     _row_to_entry,
     node_info,
 )
@@ -223,13 +224,17 @@ class Aggregator:
         entry_type: str | None = None,
         *,
         scope: Scope = None,
+        fields: str = "full",
     ) -> list[dict]:
-        """Newest-first across scope, optionally filtered by agent / entry_type."""
+        """Newest-first across scope, optionally filtered by agent / entry_type.
+
+        ``fields="meta"`` returns index rows, as :func:`boonyard.query.recent` does.
+        """
         names, _ = self._healthy_scope(scope)
         where = "WHERE (? IS NULL OR agent = ?) AND (? IS NULL OR entry_type = ?)"
         rows = self._collect_entries(names, where, [agent, agent, entry_type, entry_type], "", [])
         rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
-        return [_row_to_entry(r, source=r["source"]) for r in rows[:limit]]
+        return _project([_row_to_entry(r, source=r["source"]) for r in rows[:limit]], fields)
 
     def by_id(self, entry_id: int, *, scope: Scope = None) -> dict | None:
         """The first entry with this (node-local) id in scope order, or None."""
@@ -243,23 +248,27 @@ class Aggregator:
                     return _row_to_entry(row, source=name)
         return None
 
-    def get_thread(self, root_id: int, *, scope: Scope = None) -> list[dict]:
+    def get_thread(self, root_id: int, *, scope: Scope = None, fields: str = "full") -> list[dict]:
         """Root + direct children across scope (threads are node-local; ADR-0004)."""
         names, _ = self._healthy_scope(scope)
         rows = self._collect_entries(
             names, "WHERE id = ? OR related_id = ?", [root_id, root_id], "", []
         )
         rows.sort(key=lambda r: (r["source"], r["id"]))
-        return [_row_to_entry(r, source=r["source"]) for r in rows]
+        return _project([_row_to_entry(r, source=r["source"]) for r in rows], fields)
 
-    def search_by_tag(self, tag: str, limit: int = 20, *, scope: Scope = None) -> list[dict]:
+    def search_by_tag(
+        self, tag: str, limit: int = 20, *, scope: Scope = None, fields: str = "full"
+    ) -> list[dict]:
         """Substring tag match across scope, newest-first."""
         names, _ = self._healthy_scope(scope)
         rows = self._collect_entries(names, "WHERE tags LIKE ?", [f"%{tag}%"], "", [])
         rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
-        return [_row_to_entry(r, source=r["source"]) for r in rows[:limit]]
+        return _project([_row_to_entry(r, source=r["source"]) for r in rows[:limit]], fields)
 
-    def search_by_tag_exact(self, tag: str, limit: int = 20, *, scope: Scope = None) -> list[dict]:
+    def search_by_tag_exact(
+        self, tag: str, limit: int = 20, *, scope: Scope = None, fields: str = "full"
+    ) -> list[dict]:
         """Exact tag equality (via ``entry_tag``) across scope, newest-first."""
         names, _ = self._healthy_scope(scope)
         rows: list[sqlite3.Row] = []
@@ -276,9 +285,11 @@ class Aggregator:
             with self._attach(chunk) as conn:
                 rows.extend(conn.execute(sql, params).fetchall())
         rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
-        return [_row_to_entry(r, source=r["source"]) for r in rows[:limit]]
+        return _project([_row_to_entry(r, source=r["source"]) for r in rows[:limit]], fields)
 
-    def search_text(self, query: str, limit: int = 20, *, scope: Scope = None) -> list[dict]:
+    def search_text(
+        self, query: str, limit: int = 20, *, scope: Scope = None, fields: str = "full"
+    ) -> list[dict]:
         """FTS5 search across scope. Raises ``ValueError`` on malformed FTS syntax.
 
         FTS5 ``MATCH`` doesn't compose cleanly across ATTACH (schema-qualified
@@ -291,7 +302,7 @@ class Aggregator:
                 entry["source"] = name
                 entries.append(entry)
         entries.sort(key=lambda e: (e["timestamp"], e["id"]), reverse=True)
-        return entries[:limit]
+        return _project(entries[:limit], fields)
 
     def _aggregate_counts(self, names: list[str], select_sql: str, params_per_node: list) -> dict:
         """Sum ``(key, count)`` rows of ``select_sql`` across attach-chunks."""

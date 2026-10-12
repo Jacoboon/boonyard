@@ -16,14 +16,7 @@ from sqlite3 import Connection
 
 from . import meter
 from .db import resolve_conn
-from .query import _coerce_today
-
-FIRST_LINE_CHARS = 120
-
-
-def _first_line(content: str) -> str:
-    line = (content or "").strip().splitlines()[0] if (content or "").strip() else ""
-    return line if len(line) <= FIRST_LINE_CHARS else line[: FIRST_LINE_CHARS - 1].rstrip() + "…"
+from .query import _coerce_today, _first_line
 
 
 def ghosts(

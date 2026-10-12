@@ -496,5 +496,30 @@ class ReadStatsAcrossNodesTests(unittest.TestCase):
         self.assertEqual(stats["totals"]["reads"], 5)
 
 
+class IndexProjectionTests(AggregatorTestCase):
+    """3.8.0: ``fields="meta"`` across a union keeps ``source`` and drops content."""
+
+    def test_union_readers_return_index_rows_with_source(self):
+        root = self.agg.recent(10, scope="a")[-1]["id"]
+        for name, read in {
+            "recent": lambda **kw: self.agg.recent(10, **kw),
+            "search_by_tag": lambda **kw: self.agg.search_by_tag("shared", **kw),
+            "search_by_tag_exact": lambda **kw: self.agg.search_by_tag_exact("shared", **kw),
+            "search_text": lambda **kw: self.agg.search_text("from", **kw),
+            "get_thread": lambda **kw: self.agg.get_thread(root, scope="a", **kw),
+        }.items():
+            with self.subTest(reader=name):
+                full, meta = read(), read(fields="meta")
+                self.assertEqual(
+                    [(r["source"], r["id"]) for r in meta], [(r["source"], r["id"]) for r in full]
+                )
+                self.assertTrue(all("content" not in r for r in meta))
+                self.assertTrue(all(r["first_line"].startswith("from ") for r in meta))
+
+    def test_an_unknown_fields_raises(self):
+        with self.assertRaises(ValueError):
+            self.agg.recent(10, fields="metadata")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,44 @@ Versioning follows [ADR-0002 / architecture 04](docs/architecture/04_distributio
 major version is the schema version.** A package on `3.x` reads and writes v3 nodes. A major
 bump means a schema rollover, never a marketing decision.
 
+## [3.8.0] — 2026-10-12
+
+A long window becomes readable. On mycelium-sky, the Cypher seat measured `recent`
+overflowing its tool-result ceiling at `limit=3` (#1041): entries there run 3,000–20,000
+chars and every row carried its full `content`. Professor brought it to the Code seat.
+
+### Added
+- **`fields="meta"` on every list read**: `recent`, `search_text`, `search_by_tag`,
+  `search_by_tag_exact` and `get_thread`, in Python and at every MCP door (single node,
+  account, aggregate). Each row is `{id, timestamp, agent, entry_type, first_line, tags,
+  related_id, content_chars}`, plus `source` wherever the door names nodes, and carries
+  no `content` or `extras`. The cost of a read now grows with `limit`, not with entry
+  length: on a copy of the retired laptop node, `recent(20)` is 8,898 chars instead of
+  86,021. Read the index, then `by_id` what you need.
+- `first_line` has one derivation, shared with `ghosts` (it moved from `views` to
+  `query`), so the two tools agree about an entry's first line.
+- The readme served at connect gains one READ LAW sentence naming the tools that take
+  `fields`. It is built from the door's own tool list, like every other tool name there.
+
+### Unchanged
+- **The default.** With `fields` omitted, or `"full"`, every reader returns exactly what
+  3.7.0 returned.
+- Read heat. An index row is an id the read returned, so it counts (ADR-0013 §2a), as
+  `upcoming_dates`' headline-only rows already do.
+
+### Notes
+- An unknown `fields` value is refused with `validation`, never treated as `"full"`. A
+  typo that fell back to full content would return the payload the caller was avoiding.
+- The MCP server ignores arguments a tool does not declare, so `fields` is declared on
+  all five list reads, not a subset. A test pins the set at every door.
+- The account door's connect readme is now 3,460 of its 3,500-byte cap.
+
+### Tests
+418 (was 402). Each new guard was shown red with the defect put back: an unknown
+`fields` falling back to full fails 3, `search_by_tag` not declaring `fields` fails 4,
+the single-node `get_thread` dropping it fails 1, the aggregator's `search_text` not
+projecting fails 1, and `views` keeping its own copy of `first_line` fails 1.
+
 ## [3.7.0] — 2026-09-27
 
 The two follow-ups #169 named: the profile write gets a CLI, and a running server stops

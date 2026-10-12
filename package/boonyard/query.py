@@ -5,6 +5,9 @@ columns, ``tags`` parsed to a ``list[str]`` and ``extras`` parsed from JSON. The
 raw comma-separated ``entry.tags`` column is an internal storage detail; the API
 is structured (arch 06 §Conventions).
 
+The one opt-in exception (3.8.0): the list readers take ``fields="meta"`` and then
+return an index row per entry instead (see ``_project``). The default is unchanged.
+
 Read paths open with ``PRAGMA query_only = ON`` when given a ``db_path`` — the
 connection is physically incapable of writing (CLAUDE.md / ADR-0005). This module
 is the in-process form of the MCP read tools; the MCP layer (M7) wraps it.
@@ -45,6 +48,65 @@ def _row_to_entry(row, source: str | None = None) -> dict:
     return entry
 
 
+# The index projection (3.8.0, mycelium-sky #1041). A list read's cost is linear in
+# `limit` times entry length, and on a node of prose entries (~14,000 chars each) a
+# `recent(limit=3)` already overflowed a seat's tool-result ceiling. fields="meta"
+# answers "what is there?" cheaply; by_id then fetches what the reader chose.
+FIELDS = ("full", "meta")
+FIRST_LINE_CHARS = 120
+
+
+def _first_line(content: str) -> str:
+    """The first non-blank line of ``content``, clipped to ``FIRST_LINE_CHARS`` with "…".
+
+    The ONE derivation of an entry's first line: ``ghosts`` and every ``fields="meta"``
+    read call it, so the two tools can never disagree about what an entry's line is.
+
+    Example:
+        _first_line("\n  THE FIX\nbody")  # -> 'THE FIX'
+    """
+    line = (content or "").strip().splitlines()[0] if (content or "").strip() else ""
+    return line if len(line) <= FIRST_LINE_CHARS else line[: FIRST_LINE_CHARS - 1].rstrip() + "…"
+
+
+def _project(entries: list[dict], fields: str) -> list[dict]:
+    """Entries as asked: unchanged for ``"full"``, one index row each for ``"meta"``.
+
+    An index row is ``ghosts``' row without its read-heat columns, plus the two a list
+    read needs: ``related_id`` (a ghost is a root by definition; a recent window is not)
+    and ``content_chars``, so a reader sees what a ``by_id`` would cost before paying it.
+    ``source`` is kept wherever the row had one. ``extras`` is dropped with ``content``.
+
+    ⚠ AN UNKNOWN ``fields`` RAISES; IT NEVER FALLS BACK TO FULL. A typo such as
+    ``fields="metadata"`` that quietly returned full content would hand the caller the
+    very payload it asked to avoid, and the failure would surface as the client's
+    overflow refusal, nowhere near the argument that caused it.
+
+    Example:
+        _project(recent(5, db_path="node/journal.db"), "meta")[0]["first_line"]
+    """
+    if fields not in FIELDS:
+        raise ValueError(f"unknown fields {fields!r}; use 'full' (the default) or 'meta'")
+    if fields == "full":
+        return entries
+    rows = []
+    for e in entries:
+        row = {
+            "id": e["id"],
+            "timestamp": e["timestamp"],
+            "agent": e["agent"],
+            "entry_type": e["entry_type"],
+            "first_line": _first_line(e["content"]),
+            "tags": e["tags"],
+            "related_id": e["related_id"],
+            "content_chars": len(e["content"] or ""),
+        }
+        if "source" in e:
+            row["source"] = e["source"]
+        rows.append(row)
+    return rows
+
+
 # --------------------------------------------------------------------------
 # Core readers
 # --------------------------------------------------------------------------
@@ -53,13 +115,17 @@ def recent(
     agent: str | None = None,
     entry_type: str | None = None,
     *,
+    fields: str = "full",
     conn: Connection | None = None,
     db_path: str | Path | None = None,
 ) -> list[dict]:
     """Return the newest entries first, optionally filtered by agent / entry_type.
 
+    ``fields="meta"`` returns index rows instead of full entries (``_project``).
+
     Example:
         recent(10, agent="code", db_path="node/journal.db")
+        recent(50, fields="meta", db_path="node/journal.db")  # first_line, no content
     """
     with resolve_conn(conn, db_path, read_only=True) as c:
         rows = c.execute(
@@ -69,7 +135,7 @@ def recent(
             "ORDER BY id DESC LIMIT :limit",
             {"agent": agent, "entry_type": entry_type, "limit": limit},
         ).fetchall()
-    return [_row_to_entry(r) for r in rows]
+    return _project([_row_to_entry(r) for r in rows], fields)
 
 
 def by_id(
@@ -87,48 +153,65 @@ def by_id(
 def get_thread(
     root_id: int,
     *,
+    fields: str = "full",
     conn: Connection | None = None,
     db_path: str | Path | None = None,
 ) -> list[dict]:
     """Return the root entry plus every entry pointing at it (one level, ADR-0004).
 
     Oldest-first. For root-anchored skill threads this is the full revision lineage.
+    ``fields="meta"`` returns index rows instead of full entries (``_project``).
+
+    Example:
+        get_thread(84, fields="meta", db_path="node/journal.db")
     """
     with resolve_conn(conn, db_path, read_only=True) as c:
         rows = c.execute(
             f"SELECT {_ENTRY_COLS} FROM entry WHERE id = :rid OR related_id = :rid ORDER BY id",
             {"rid": root_id},
         ).fetchall()
-    return [_row_to_entry(r) for r in rows]
+    return _project([_row_to_entry(r) for r in rows], fields)
 
 
 def search_by_tag(
     tag: str,
     limit: int = 20,
     *,
+    fields: str = "full",
     conn: Connection | None = None,
     db_path: str | Path | None = None,
 ) -> list[dict]:
-    """Substring tag match (``LIKE %tag%``). Casual use; prefer search_by_tag_exact."""
+    """Substring tag match (``LIKE %tag%``). Casual use; prefer search_by_tag_exact.
+
+    ``fields="meta"`` returns index rows instead of full entries (``_project``).
+
+    Example:
+        search_by_tag("boonyard", 20, fields="meta", db_path="node/journal.db")
+    """
     with resolve_conn(conn, db_path, read_only=True) as c:
         rows = c.execute(
             f"SELECT {_ENTRY_COLS} FROM entry WHERE tags LIKE ? ORDER BY id DESC LIMIT ?",
             (f"%{tag}%", limit),
         ).fetchall()
-    return [_row_to_entry(r) for r in rows]
+    return _project([_row_to_entry(r) for r in rows], fields)
 
 
 def search_by_tag_exact(
     tag: str,
     limit: int = 20,
     *,
+    fields: str = "full",
     conn: Connection | None = None,
     db_path: str | Path | None = None,
 ) -> list[dict]:
     """Exact tag equality via the ``entry_tag`` companion table. Fast at any scale.
 
     The preferred tool for namespace lookups (``case:...``, ``model:...``) and for
-    ``skill-<slug>`` identity lookups.
+    ``skill-<slug>`` identity lookups. ``fields="meta"`` returns index rows instead of
+    full entries (``_project``).
+
+    Example:
+        search_by_tag_exact("model:claude-opus-5-5", fields="meta", db_path="node/journal.db")
     """
     with resolve_conn(conn, db_path, read_only=True) as c:
         rows = c.execute(
@@ -137,7 +220,7 @@ def search_by_tag_exact(
             "WHERE t.tag = ? ORDER BY e.id DESC LIMIT ?",
             (tag, limit),
         ).fetchall()
-    return [_row_to_entry(r) for r in rows]
+    return _project([_row_to_entry(r) for r in rows], fields)
 
 
 def _as_literal_terms(query: str) -> str:
@@ -159,13 +242,18 @@ def search_text(
     query: str,
     limit: int = 20,
     *,
+    fields: str = "full",
     conn: Connection | None = None,
     db_path: str | Path | None = None,
 ) -> list[dict]:
     """FTS5 search over content. ``query`` accepts FTS5 syntax (``fuse AND boot``).
 
     Raises ``ValueError`` on malformed FTS syntax (maps to the MCP ``validation``
-    error). Newest-first within the match set.
+    error). Newest-first within the match set. ``fields="meta"`` returns index rows
+    instead of full entries (``_project``).
+
+    Example:
+        search_text("fuse AND boot", 20, fields="meta", db_path="node/journal.db")
     """
     sql = (
         f"SELECT e.{', e.'.join(_ENTRY_COLS.split(', '))} "
@@ -190,7 +278,7 @@ def search_text(
                     f"could not search for {query!r} — try plain words without "
                     f"punctuation, or FTS5 syntax like 'fuse AND boot' ({exc})"
                 ) from exc
-    return [_row_to_entry(r) for r in rows]
+    return _project([_row_to_entry(r) for r in rows], fields)
 
 
 # --------------------------------------------------------------------------

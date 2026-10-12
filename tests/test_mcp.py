@@ -12,7 +12,13 @@ from pathlib import Path
 from boonyard import change_profile, init_db, load_profile, log_entry, upcoming_dates
 from boonyard import meter as boonyard_meter
 from boonyard.aggregator import Aggregator
-from boonyard.mcp import MCPServer, make_httpd
+from boonyard.mcp import (
+    TOOL_DEFS,
+    MCPServer,
+    account_tool_defs,
+    aggregator_tool_defs,
+    make_httpd,
+)
 from boonyard.profile_change import add_seat, read_profile_text
 
 # Pinned so the tool and the Python call are compared against the same day.
@@ -858,6 +864,89 @@ class ProfileReloadTests(unittest.TestCase):
         kwargs = served.call_args.kwargs
         self.assertEqual(Path(kwargs["profile_path"]), self.toml)
         self.assertIsNone(kwargs["profile"])
+
+
+class FieldsProjectionToolTests(unittest.TestCase):
+    """3.8.0 (mycelium-sky #1041): ``fields`` on every list read, at every door."""
+
+    #: The tools whose result is a list of entries — the same five ``_returned_ids``
+    #: treats as list reads. by_id is the full fetch an index row leads to, so not it.
+    LIST_READS = {"recent", "get_thread", "search_by_tag", "search_by_tag_exact", "search_text"}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = str(Path(self._tmp.name) / "journal.db")
+        init_db(self.db, node_name="test")
+        self.root = log_entry(
+            "code", "note", "HEADLINE one\n" + "body " * 2000, tags="lane", db_path=self.db
+        )
+        log_entry(
+            "code", "note", "HEADLINE two", related_id=self.root, tags="lane", db_path=self.db
+        )
+        self.server = MCPServer(db_path=self.db)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_exactly_the_list_reads_advertise_fields_at_every_door(self):
+        """This server ignores an argument a tool does not declare, so a list read that
+        lacked ``fields`` would answer an index request with full content, silently."""
+        for label, defs in {
+            "single": TOOL_DEFS,
+            "account": account_tool_defs(),
+            "aggregate": aggregator_tool_defs(),
+        }.items():
+            with self.subTest(door=label):
+                declares = {t["name"] for t in defs if "fields" in t["inputSchema"]["properties"]}
+                self.assertEqual(declares, self.LIST_READS)
+                for t in defs:
+                    if t["name"] in self.LIST_READS:
+                        spec = t["inputSchema"]["properties"]["fields"]
+                        self.assertEqual(spec["enum"], ["full", "meta"])
+                        self.assertNotIn("fields", t["inputSchema"]["required"])
+
+    def test_default_and_full_return_content_and_meta_does_not(self):
+        full, _ = _call(self.server, "recent", {})
+        same, _ = _call(self.server, "recent", {"fields": "full"})
+        meta, err = _call(self.server, "recent", {"fields": "meta"})
+        self.assertIsNone(err)
+        self.assertEqual(full, same)
+        self.assertIn("content", full[1])
+        self.assertNotIn("content", meta[1])
+        self.assertEqual(meta[1]["first_line"], "HEADLINE one")
+        self.assertEqual(meta[1]["content_chars"], len(full[1]["content"]))
+        self.assertEqual(meta[0]["related_id"], self.root)
+
+    def test_every_list_read_honours_meta_over_mcp(self):
+        for name, args in [
+            ("recent", {}),
+            ("get_thread", {"root_id": self.root}),
+            ("search_by_tag", {"tag": "lane"}),
+            ("search_by_tag_exact", {"tag": "lane"}),
+            ("search_text", {"query": "HEADLINE"}),
+        ]:
+            with self.subTest(tool=name):
+                rows, err = _call(self.server, name, {**args, "fields": "meta"})
+                self.assertIsNone(err)
+                self.assertEqual(len(rows), 2)
+                self.assertTrue(all("content" not in r and "first_line" in r for r in rows))
+
+    def test_an_unknown_fields_is_a_validation_error(self):
+        _, err = _call(self.server, "recent", {"fields": "metadata"})
+        self.assertEqual(err["data"]["error"], "validation")
+        self.assertIn("'meta'", err["data"]["message"])
+
+    def test_the_aggregate_door_keeps_source_on_index_rows(self):
+        server = MCPServer(aggregator=Aggregator({"t": self.db}))
+        rows, err = _call(server, "recent", {"fields": "meta"})
+        self.assertIsNone(err)
+        self.assertEqual({r["source"] for r in rows}, {"t"})
+        self.assertTrue(all("content" not in r for r in rows))
+        thread, err = _call(
+            server, "get_thread", {"root_id": self.root, "node": "t", "fields": "meta"}
+        )
+        self.assertIsNone(err)
+        self.assertEqual([r["first_line"] for r in thread], ["HEADLINE one", "HEADLINE two"])
 
 
 if __name__ == "__main__":

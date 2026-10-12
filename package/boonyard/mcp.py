@@ -85,6 +85,17 @@ _STR = {"type": "string"}
 _INT = {"type": "integer"}
 _BOOL = {"type": "boolean"}
 _SCOPE = {"description": "node scope: a name, a list of names, or 'all'"}
+# The index projection on every list read (3.8.0, mycelium-sky #1041). Advertised on
+# each of them, never on a subset: this server ignores an argument a tool does not
+# declare, so a `fields` honoured by recent and silently dropped by search_by_tag would
+# return full content to a caller who asked for an index — the overflow it came to avoid.
+_FIELDS = {
+    "type": "string",
+    "enum": ["full", "meta"],
+    "description": "'meta' returns one index row per entry {id, timestamp, agent, "
+    "entry_type, first_line, tags, related_id, content_chars} and no content; by_id then "
+    "fetches the ones you want. Default 'full'.",
+}
 
 # The canonical tool surface (arch 06). retag is intentionally NOT here.
 TOOL_DEFS: list[dict] = [
@@ -116,33 +127,34 @@ TOOL_DEFS: list[dict] = [
     ),
     _tool(
         "recent",
-        "Newest entries, optionally filtered.",
-        {"limit": _INT, "agent": _STR, "entry_type": _STR, "scope": _SCOPE},
+        "Newest entries, optionally filtered. Pass fields='meta' for an index of a long "
+        "window: first lines and sizes, no content.",
+        {"limit": _INT, "agent": _STR, "entry_type": _STR, "fields": _FIELDS, "scope": _SCOPE},
         [],
     ),
     _tool("by_id", "One entry by id, or null.", {"entry_id": _INT, "scope": _SCOPE}, ["entry_id"]),
     _tool(
         "get_thread",
         "Root entry + direct children (one level, ADR-0004).",
-        {"root_id": _INT, "scope": _SCOPE},
+        {"root_id": _INT, "fields": _FIELDS, "scope": _SCOPE},
         ["root_id"],
     ),
     _tool(
         "search_by_tag",
         "Substring tag match.",
-        {"tag": _STR, "limit": _INT, "scope": _SCOPE},
+        {"tag": _STR, "limit": _INT, "fields": _FIELDS, "scope": _SCOPE},
         ["tag"],
     ),
     _tool(
         "search_by_tag_exact",
         "Exact tag equality (entry_tag).",
-        {"tag": _STR, "limit": _INT, "scope": _SCOPE},
+        {"tag": _STR, "limit": _INT, "fields": _FIELDS, "scope": _SCOPE},
         ["tag"],
     ),
     _tool(
         "search_text",
         "FTS5 full-text search over content.",
-        {"query": _STR, "limit": _INT, "scope": _SCOPE},
+        {"query": _STR, "limit": _INT, "fields": _FIELDS, "scope": _SCOPE},
         ["query"],
     ),
     _tool(
@@ -358,6 +370,11 @@ def _dates_args(args: dict) -> dict:
         "prefix": args.get("prefix") or "killdate",
         "today": args.get("today"),
     }
+
+
+def _fields(args: dict) -> str:
+    """The projection a list read asked for; ``"full"`` when it asked for none."""
+    return args.get("fields") or "full"
 
 
 def _stats_args(args: dict) -> dict:
@@ -801,19 +818,30 @@ class MCPServer:
             return {"id": new_id, "root_id": root_id if root_id is not None else new_id}
         if name == "recent":
             return query.recent(
-                args.get("limit", 20), args.get("agent"), args.get("entry_type"), db_path=db
+                args.get("limit", 20),
+                args.get("agent"),
+                args.get("entry_type"),
+                fields=_fields(args),
+                db_path=db,
             )
         if name == "by_id":
             return query.by_id(args["entry_id"], db_path=db)
         if name == "get_thread":
-            return query.get_thread(args["root_id"], db_path=db)
+            return query.get_thread(args["root_id"], fields=_fields(args), db_path=db)
         if name == "search_by_tag":
-            return query.search_by_tag(args["tag"], args.get("limit", 20), db_path=db)
+            return query.search_by_tag(
+                args["tag"], args.get("limit", 20), fields=_fields(args), db_path=db
+            )
         if name == "search_by_tag_exact":
-            return query.search_by_tag_exact(args["tag"], args.get("limit", 20), db_path=db)
+            return query.search_by_tag_exact(
+                args["tag"], args.get("limit", 20), fields=_fields(args), db_path=db
+            )
         if name == "search_text":
             return query.search_text(
-                args.get("query") or args.get("text"), args.get("limit", 20), db_path=db
+                args.get("query") or args.get("text"),
+                args.get("limit", 20),
+                fields=_fields(args),
+                db_path=db,
             )
         if name == "list_tags":
             return query.list_tags(args.get("prefix"), args.get("tree", False), db_path=db)
@@ -874,19 +902,30 @@ class MCPServer:
             scope = named
         if name == "recent":
             return agg.recent(
-                args.get("limit", 20), args.get("agent"), args.get("entry_type"), scope=scope
+                args.get("limit", 20),
+                args.get("agent"),
+                args.get("entry_type"),
+                scope=scope,
+                fields=_fields(args),
             )
         if name == "by_id":
             return agg.by_id(args["entry_id"], scope=scope)
         if name == "get_thread":
-            return agg.get_thread(args["root_id"], scope=scope)
+            return agg.get_thread(args["root_id"], scope=scope, fields=_fields(args))
         if name == "search_by_tag":
-            return agg.search_by_tag(args["tag"], args.get("limit", 20), scope=scope)
+            return agg.search_by_tag(
+                args["tag"], args.get("limit", 20), scope=scope, fields=_fields(args)
+            )
         if name == "search_by_tag_exact":
-            return agg.search_by_tag_exact(args["tag"], args.get("limit", 20), scope=scope)
+            return agg.search_by_tag_exact(
+                args["tag"], args.get("limit", 20), scope=scope, fields=_fields(args)
+            )
         if name == "search_text":
             return agg.search_text(
-                args.get("query") or args.get("text"), args.get("limit", 20), scope=scope
+                args.get("query") or args.get("text"),
+                args.get("limit", 20),
+                scope=scope,
+                fields=_fields(args),
             )
         if name == "list_tags":
             return agg.list_tags(args.get("prefix"), args.get("tree", False), scope=scope)

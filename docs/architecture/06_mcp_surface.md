@@ -6,6 +6,7 @@ The MCP server is the principal access path for AI seats. This document is the c
 
 - All tools accept an optional `scope` parameter (per ADR-0003 / `03_scope_model.md`). Writers accept it only as a single node name; readers accept any scope form.
 - All readers return objects with the same shape: `{id, timestamp, agent, entry_type, content, related_id, tags, extras, source?}`. The `source` field is present only in aggregator responses, naming the originating node.
+  - *Dated note, 2026-10-12 (v3.8.0; Professor's request, from mycelium-sky #1041):* the list readers (`recent`, `search_by_tag`, `search_by_tag_exact`, `search_text`, `get_thread`) take an optional `fields`. `'full'`, the default, is the shape above, unchanged. `'meta'` returns one index row per entry, `{id, timestamp, agent, entry_type, first_line, tags, related_id, content_chars, source?}`, without `content` or `extras`. `first_line` is the same derivation `ghosts` uses (one function). An unknown value is a `validation` error, never a silent fall-back to full. The reason is cost: a full list read grows with `limit` times entry length, and on a node of prose entries `recent(limit=3)` overflowed a seat's tool-result ceiling.
 - `tags` returned in API responses is the parsed list of strings, not the comma-separated raw column value. The column-as-CSV is an internal storage convention; the API is structured.
 - Errors are returned as MCP errors with structured payload `{error: <code>, message: <human text>, hint?: <suggestion>}`.
 - All tool definitions are versioned with the package — adding a new tool bumps the package's minor version; renaming or removing a tool bumps the major version.
@@ -70,6 +71,7 @@ recent(
     limit: int = 20,
     agent: str | None = None,
     entry_type: str | None = None,
+    fields: str = 'full',            # 'meta' → index rows (2026-10-12, v3.8.0)
     scope: str | None | list[str] = None,
 ) -> list[Entry]
 ```
@@ -95,6 +97,7 @@ Returns one entry by id, or null. In aggregator mode with a list scope, returns 
 search_by_tag(
     tag: str,
     limit: int = 20,
+    fields: str = 'full',            # 'meta' → index rows (2026-10-12, v3.8.0)
     scope: str | None | list[str] = None,
 ) -> list[Entry]
 ```
@@ -107,6 +110,7 @@ Substring tag match (LIKE %tag%). Kept for casual use and backward compatibility
 search_by_tag_exact(
     tag: str,                # e.g. 'case:521-5400610' or 'skill-fuse-boot-ritual'
     limit: int = 20,
+    fields: str = 'full',            # 'meta' → index rows (2026-10-12, v3.8.0)
     scope: str | None | list[str] = None,
 ) -> list[Entry]
 ```
@@ -119,6 +123,7 @@ Exact tag equality via the `entry_tag` companion table. Fast at any scale. The p
 search_text(
     query: str,              # FTS5 syntax: 'fuse AND boot', 'smoke*', '"exact phrase"'
     limit: int = 20,
+    fields: str = 'full',            # 'meta' → index rows (2026-10-12, v3.8.0)
     scope: str | None | list[str] = None,
 ) -> list[Entry]
 ```
@@ -130,6 +135,7 @@ FTS5 search over `content`. Newest-first within match.
 ```
 get_thread(
     root_id: int,
+    fields: str = 'full',            # 'meta' → index rows (2026-10-12, v3.8.0)
     scope: str | None | list[str] = None,
 ) -> list[Entry]
 ```
@@ -351,6 +357,7 @@ The substrate's self-audit. Exposed in OSS; in SaaS, throttled (it's a full-tabl
 - **Stable since v3:** `search_by_tag_exact`, `log_skill_revision`, `list_skills`, `latest_skill`, `list_agents`, `list_entry_types`, `list_nodes`, `node_info`, `audit_doctor`.
 - **Added 2026-08-24:** `upcoming_dates` (additive; a minor-version bump is owed at the next release cut). *Discharged: shipped as v3.2.0, 2026-09-06.*
 - **Added 2026-08-25:** `read_stats` (additive; same pending minor bump). *Discharged: v3.2.0, 2026-09-06.*
+- **Added 2026-10-12:** an optional `fields` parameter on `recent`, `search_by_tag`, `search_by_tag_exact`, `search_text` and `get_thread` (additive; v3.8.0). No name and no required parameter changed, so the stable-forever promise above holds.
 - **Additions are minor-version bumps; removals are major-version bumps.** A breaking change to any of the above bumps the package's major version, which (per `04_distribution.md`) means a schema migration too.
 
 ## Error model
